@@ -21,8 +21,9 @@ class PlatformaticApp extends EventEmitter {
   #serverConfig
   #debouncedRestart
   #hasManagementApi
+  #metricsConfig
 
-  constructor (appConfig, loaderPort, logger, telemetryConfig, serverConfig, hasManagementApi) {
+  constructor (appConfig, loaderPort, logger, telemetryConfig, serverConfig, hasManagementApi, metricsConfig) {
     super()
     this.appConfig = appConfig
     this.config = null
@@ -38,6 +39,7 @@ class PlatformaticApp extends EventEmitter {
       name: this.appConfig.id
     })
     this.#telemetryConfig = telemetryConfig
+    this.#metricsConfig = metricsConfig
     this.#serverConfig = serverConfig
 
     /* c8 ignore next 4 */
@@ -111,6 +113,7 @@ class PlatformaticApp extends EventEmitter {
       this.server = await buildServer({
         app: this.config.app,
         ...config,
+        id: this.appConfig.id,
         configManager
       })
     } catch (err) {
@@ -133,7 +136,8 @@ class PlatformaticApp extends EventEmitter {
         /* c8 ignore next 5 */
       } catch (err) {
         this.server.log.error({ err })
-        process.exit(1)
+        this.#starting = false
+        throw err
       }
     } else {
       // Make sure the server has run all the onReady hooks before returning.
@@ -249,8 +253,16 @@ class PlatformaticApp extends EventEmitter {
     const { configManager } = this.config
     configManager.update({
       ...configManager.current,
-      telemetry: this.#telemetryConfig
+      telemetry: this.#telemetryConfig,
+      metrics: this.#metricsConfig
     })
+
+    if (configManager.current.metrics !== false) {
+      configManager.update({
+        ...configManager.current,
+        metrics: this.#metricsConfig
+      })
+    }
 
     if (this.#serverConfig) {
       configManager.update({

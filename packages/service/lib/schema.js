@@ -293,9 +293,15 @@ const server = {
         { type: 'integer' }
       ]
     },
+    http2: {
+      type: 'boolean'
+    },
     https: {
       type: 'object',
       properties: {
+        allowHTTP1: {
+          type: 'boolean'
+        },
         key: {
           anyOf: [
             {
@@ -577,6 +583,10 @@ const metrics = {
           },
           additionalProperties: false,
           required: ['username', 'password']
+        },
+        labels: {
+          type: 'object',
+          additionalProperties: { type: 'string' }
         }
       },
       additionalProperties: false

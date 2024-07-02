@@ -1,6 +1,6 @@
 {
   "name": "platformatic",
-  "version": "1.39.0",
+  "version": "1.48.0",
   "description": "Platformatic CLI",
   "main": "cli.js",
   "type": "module",
@@ -32,8 +32,8 @@
     "mercurius"
   ],
   "devDependencies": {
-    "borp": "^0.13.0",
-    "c8": "^9.1.0",
+    "borp": "^0.15.0",
+    "c8": "^10.0.0",
     "fastify": "^4.26.2",
     "license-checker": "^25.0.1",
     "mkdirp": "^2.1.6",

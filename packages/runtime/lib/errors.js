@@ -5,6 +5,7 @@ const createError = require('@fastify/error')
 const ERROR_PREFIX = 'PLT_RUNTIME'
 
 module.exports = {
+  AddressInUseError: createError(`${ERROR_PREFIX}_EADDR_IN_USE`, 'The current port is in use by another application'),
   RuntimeExitedError: createError(`${ERROR_PREFIX}_RUNTIME_EXIT`, 'The runtime exited before the operation completed'),
   UnknownRuntimeAPICommandError: createError(`${ERROR_PREFIX}_UNKNOWN_RUNTIME_API_COMMAND`, 'Unknown Runtime API command "%s"'),
   ServiceNotFoundError: createError(`${ERROR_PREFIX}_SERVICE_NOT_FOUND`, 'Service not found. Available services are: %s'),
@@ -24,7 +25,6 @@ module.exports = {
   NodeInspectorFlagsNotSupportedError: createError(`${ERROR_PREFIX}_NODE_INSPECTOR_FLAGS_NOT_SUPPORTED`, 'The Node.js inspector flags are not supported. Please use \'platformatic start --inspect\' instead.'),
   FailedToUnlinkManagementApiSocket: createError(`${ERROR_PREFIX}_FAILED_TO_UNLINK_MANAGEMENT_API_SOCKET`, 'Failed to unlink management API socket "%s"'),
   LogFileNotFound: createError(`${ERROR_PREFIX}_LOG_FILE_NOT_FOUND`, 'Log file with index %s not found', 404),
-  CannotFindGeneratorForTemplateError: createError(`${ERROR_PREFIX}_CANNOT_FIND_GENERATOR_FOR_TEMPLATE`, 'Cannot find a generator for template "%s"'),
   WorkerIsRequired: createError(`${ERROR_PREFIX}_REQUIRED_WORKER`, 'The worker parameter is required'),
 
   // TODO: should remove next one as it's not used anymore

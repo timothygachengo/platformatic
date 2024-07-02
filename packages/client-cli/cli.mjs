@@ -301,7 +301,8 @@ export async function command (argv) {
       t: 'typescript',
       c: 'config',
       R: 'runtime',
-      F: 'full'
+      F: 'full',
+      h: 'help'
     }
   })
 
@@ -370,7 +371,7 @@ export async function command (argv) {
     url = `http://${options.runtime}.plt.local`
   }
 
-  if (!url) {
+  if (!url || options.help) {
     await help.toStdout()
     process.exit(1)
   }
@@ -399,7 +400,7 @@ export async function command (argv) {
     options.urlAuthHeaders = options['url-auth-headers']
     await downloadAndProcess({ url, ...options, logger, runtime: options.runtime })
     logger.info(`Client generated successfully into ${options.folder}`)
-    logger.info('Check out the docs to know more: https://docs.platformatic.dev/docs/reference/client/introduction')
+    logger.info('Check out the docs to know more: https://docs.platformatic.dev/docs/service/overview')
     if (runtime) {
       await runtime.stopServices()
     }

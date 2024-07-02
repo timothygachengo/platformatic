@@ -5,14 +5,17 @@ const { readFile, access } = require('node:fs/promises')
 const EventEmitter = require('node:events')
 const { createRequire } = require('node:module')
 const Ajv = require('ajv')
-const fastifyPlugin = require('./plugin')
+const jsonPath = require('jsonpath')
 const dotenv = require('dotenv')
+const fastifyPlugin = require('./plugin')
 const { getParser } = require('./formats')
 const { isFileAccessible, splitModuleFromVersion } = require('./utils')
 const errors = require('./errors')
 const abstractlogger = require('./logger')
 
 const PLT_ROOT = 'PLT_ROOT'
+
+const skipReplaceEnv = Symbol('skipReplaceEnv')
 
 class ConfigManager extends EventEmitter {
   constructor (opts) {
@@ -47,8 +50,9 @@ class ConfigManager extends EventEmitter {
     this.schema = opts.schema || {}
     this.schemaOptions = opts.schemaOptions || {}
     this._providedSchema = !!opts.schema
+    this._replaceEnvIgnore = opts.replaceEnvIgnore || []
     this._originalEnv = opts.env || {}
-    this.env = { ...process.env, ...this._originalEnv }
+    this.env = { ...this._originalEnv }
     this._onMissingEnv = opts.onMissingEnv
     if (typeof opts.transformConfig === 'function') {
       this._transformConfig = opts.transformConfig
@@ -64,62 +68,57 @@ class ConfigManager extends EventEmitter {
     }
   }
 
-  async replaceEnv (configString) {
+  async replaceEnv (config, opts = {}) {
     /* istanbul ignore next */
     if (this.pupa === null) {
       this.pupa = (await import('pupa')).default
     }
-    let dotEnvPath
-    let currentPath = this.fullPath
-    const rootPath = parse(this.fullPath).root
-    while (currentPath !== rootPath) {
-      try {
-        const candidatePath = join(currentPath, '.env')
-        await access(candidatePath)
-        dotEnvPath = candidatePath
-        break
-      } catch {
-        // Nothing to do
-        currentPath = join(currentPath, '..')
-      }
-    }
-    // try at last process.cwd()
-    if (!dotEnvPath) {
-      try {
-        const cwdPath = join(process.cwd(), '.env')
-        await access(cwdPath)
-        dotEnvPath = cwdPath
-      } catch {
-        // do nothing, again
-      }
-    }
-    let env = { ...process.env, ...this._originalEnv }
-    if (dotEnvPath) {
-      const data = await readFile(dotEnvPath, 'utf-8')
-      const parsed = dotenv.parse(data)
-      env = { ...env, ...parsed }
-    }
-    this.env = env
 
-    const escapeJSONstring = ({ key, value }) => {
+    if (opts.ignore !== undefined) {
+      for (const path of opts.ignore) {
+        jsonPath.apply(config, path, (value) => {
+          value[skipReplaceEnv] = true
+          return value
+        })
+      }
+    }
+
+    const escapeJSON = opts.escapeJSON ?? true
+    const env = opts.env ?? await this.#loadEnv()
+
+    if (typeof config === 'object' && config !== null) {
+      if (config[skipReplaceEnv]) {
+        delete config[skipReplaceEnv]
+        return config
+      }
+
+      for (const key of Object.keys(config)) {
+        const value = config[key]
+        config[key] = await this.replaceEnv(value, { env, escapeJSON: false })
+      }
+      return config
+    }
+
+    const replaceEnv = ({ key, value }) => {
       if (!value && this._onMissingEnv) {
         value = this._onMissingEnv(key)
-      }
-
-      if (!value) {
-        return value
       }
 
       // TODO this should handle all the escapes chars
       // defined in https://www.json.org/json-en.html
       // but it's good enough for now.
-      return value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')
+      if (value && escapeJSON) {
+        value = value.replace(/\\/g, '\\\\').replace(/\n/g, '\\n')
+      }
+
+      return value
     }
-    const fullEnv = {
-      ...this.env,
-      [PLT_ROOT]: join(this.fullPath, '..')
+
+    if (typeof config === 'string') {
+      return this.pupa(config, env, { transform: replaceEnv })
     }
-    return this.pupa(configString, fullEnv, { transform: escapeJSONstring })
+
+    return config
   }
 
   _transformConfig () {}
@@ -128,11 +127,16 @@ class ConfigManager extends EventEmitter {
     try {
       if (this.fullPath) {
         const configString = await this.load()
+
+        let config = this._parser(configString)
         if (replaceEnv) {
-          this.current = this._parser(await this.replaceEnv(configString))
-        } else {
-          this.current = this._parser(await this.load())
+          config = await this.replaceEnv(config, {
+            escapeJSON: false,
+            ignore: this._replaceEnvIgnore
+          })
         }
+
+        this.current = config
       }
 
       if (this._stackableUpgrade) {
@@ -187,7 +191,6 @@ class ConfigManager extends EventEmitter {
       await this._transformConfig()
       return true
     } catch (err) {
-      console.log(err)
       if (err.name === 'MissingValueError') {
         throw new errors.EnvVarMissingError(err.key)
       }
@@ -334,6 +337,46 @@ class ConfigManager extends EventEmitter {
     const configFilesAccessibility = await Promise.all(configFileNames.map((fileName) => isFileAccessible(fileName, directory)))
     const accessibleConfigFilename = configFileNames.find((value, index) => configFilesAccessibility[index])
     return accessibleConfigFilename
+  }
+
+  async #loadEnv () {
+    let dotEnvPath
+    let currentPath = this.fullPath
+    const rootPath = parse(this.fullPath).root
+    while (currentPath !== rootPath) {
+      try {
+        const candidatePath = join(currentPath, '.env')
+        await access(candidatePath)
+        dotEnvPath = candidatePath
+        break
+      } catch {
+        // Nothing to do
+        currentPath = join(currentPath, '..')
+      }
+    }
+    // try at last process.cwd()
+    if (!dotEnvPath) {
+      try {
+        const cwdPath = join(process.cwd(), '.env')
+        await access(cwdPath)
+        dotEnvPath = cwdPath
+      } catch {
+        // do nothing, again
+      }
+    }
+    let env = { ...this._originalEnv }
+    if (dotEnvPath) {
+      const data = await readFile(dotEnvPath, 'utf-8')
+      const parsed = dotenv.parse(data)
+      env = { ...env, ...parsed }
+    }
+    this.env = env
+
+    return {
+      ...process.env,
+      ...this.env,
+      [PLT_ROOT]: join(this.fullPath, '..')
+    }
   }
 }
 
