@@ -1,10 +1,9 @@
-import { StackableGenerator } from '@platformatic/generators'
 import { createDirectory, getPkgManager } from '@platformatic/utils'
 import generateName from 'boring-name-generator'
 import { execa } from 'execa'
 import inquirer from 'inquirer'
 import parseArgs from 'minimist'
-import { writeFile } from 'node:fs/promises'
+import { writeFile, readFile } from 'node:fs/promises'
 import path, { basename, join } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
 import { pathToFileURL } from 'node:url'
@@ -15,11 +14,18 @@ import resolve from 'resolve'
 import { request } from 'undici'
 import { createGitRepository } from './create-git-repository.mjs'
 import { say } from './say.mjs'
-import { getUsername, getVersion, isCurrentVersionSupported, minimumSupportedNodeVersions } from './utils.mjs'
+import { getUsername, getVersion } from './utils.mjs'
+import { ConfigManager } from '@platformatic/config'
 
 const MARKETPLACE_HOST = 'https://marketplace.platformatic.dev'
+const defaultStackables = ['@platformatic/composer', '@platformatic/db', '@platformatic/service']
 
 export async function fetchStackables (marketplaceHost) {
+  // Skip the remote network request if we are running tests
+  if (process.env.MARKETPLACE_TEST) {
+    return [...defaultStackables]
+  }
+
   marketplaceHost = marketplaceHost || MARKETPLACE_HOST
 
   const stackablesRequest = request(marketplaceHost + '/templates')
@@ -32,7 +38,7 @@ export async function fetchStackables (marketplaceHost) {
     }
   } catch (err) {}
 
-  return ['@platformatic/composer', '@platformatic/db', '@platformatic/service']
+  return [...defaultStackables]
 }
 
 export async function chooseStackable (stackables) {
@@ -56,8 +62,22 @@ async function importOrLocal ({ pkgManager, name, projectDir, pkg }) {
       return await import(pathToFileURL(fileToImport))
     } catch {}
 
-    const spinner = ora(`Installing ${pkg}...`).start()
-    await execa(pkgManager, ['install', pkg], { cwd: projectDir })
+    let version = ''
+
+    if (defaultStackables.includes(pkg) || pkg === '@platformatic/runtime') {
+      // Let's find if we are using one of the default stackables
+      // If we are, we have to use the "local" version of the package
+
+      const meta = await JSON.parse(await readFile(join(import.meta.dirname, '..', 'package.json'), 'utf-8'))
+      if (meta.version.includes('-')) {
+        version = `@${meta.version}`
+      } else {
+        version = `@^${meta.version}`
+      }
+    }
+
+    const spinner = ora(`Installing ${pkg + version}...`).start()
+    await execa(pkgManager, ['install', pkg + version], { cwd: projectDir })
     spinner.succeed()
 
     const fileToImport = resolve.sync(pkg, { basedir: projectDir })
@@ -79,14 +99,6 @@ export const createPlatformatic = async argv => {
   const greeting = username ? `Hello ${username},` : 'Hello,'
   await say(`${greeting} welcome to ${version ? `Platformatic ${version}!` : 'Platformatic!'}`)
 
-  const currentVersion = process.versions.node
-  const supported = isCurrentVersionSupported(currentVersion)
-  if (!supported) {
-    const supportedVersions = minimumSupportedNodeVersions.join(' or >= ')
-    await say(`Platformatic is not supported on Node.js v${currentVersion}.`)
-    await say(`Please use one of the following Node.js versions >= ${supportedVersions}.`)
-  }
-
   const logger = pino(
     pretty({
       translateTime: 'SYS:HH:MM:ss',
@@ -95,34 +107,21 @@ export const createPlatformatic = async argv => {
   )
 
   const pkgManager = getPkgManager()
-
-  const { projectType } = await inquirer.prompt({
-    type: 'list',
-    name: 'projectType',
-    message: 'What kind of project do you want to create?',
-    default: 'application',
-    choices: [
-      { name: 'Application', value: 'application' },
-      { name: 'Stackable', value: 'stackable' },
-    ],
-  })
-
-  if (projectType === 'application') {
-    await createApplication(args, logger, pkgManager)
-  } else {
-    await createStackable(args, logger, pkgManager)
-  }
+  await createApplication(args, logger, pkgManager)
 }
 
 async function createApplication (args, logger, pkgManager) {
-  const optionsDir = await inquirer.prompt({
-    type: 'input',
-    name: 'dir',
-    message: 'Where would you like to create your project?',
-    default: 'platformatic',
-  })
+  let projectDir = process.cwd()
+  if (!(await ConfigManager.findConfigFile())) {
+    const optionsDir = await inquirer.prompt({
+      type: 'input',
+      name: 'dir',
+      message: 'Where would you like to create your project?',
+      default: 'platformatic',
+    })
 
-  const projectDir = path.resolve(process.cwd(), optionsDir.dir)
+    projectDir = path.resolve(process.cwd(), optionsDir.dir)
+  }
   const projectName = basename(projectDir)
 
   await createDirectory(projectDir)
@@ -276,39 +275,4 @@ async function createApplication (args, logger, pkgManager) {
   logger.info('Project created successfully, executing post-install actions...')
   await generator.postInstallActions()
   logger.info('You are all set! Run `npm start` to start your project.')
-}
-
-async function createStackable (args, logger, pkgManager) {
-  logger.info('Creating a stackable project...')
-
-  const generator = new StackableGenerator({ logger, inquirer })
-  await generator.ask()
-  await generator.prepare()
-  await generator.writeFiles()
-
-  const projectDir = path.resolve(process.cwd(), generator.config.targetDirectory)
-
-  const { initGitRepository } = await inquirer.prompt({
-    type: 'list',
-    name: 'initGitRepository',
-    message: 'Do you want to init the git repository?',
-    default: false,
-    choices: [
-      { name: 'yes', value: true },
-      { name: 'no', value: false },
-    ],
-  })
-
-  if (initGitRepository) {
-    await createGitRepository(logger, projectDir)
-  }
-
-  if (args.install) {
-    const spinner = ora('Installing dependencies...').start()
-    await execa(pkgManager, ['install'], { cwd: projectDir })
-    spinner.succeed()
-  }
-
-  await generator.postInstallActions()
-  logger.info('Stackable created successfully! Run `npm run create` to create an application.')
 }

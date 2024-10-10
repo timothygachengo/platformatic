@@ -43,7 +43,7 @@ async function createServer (serverContext) {
   const root = fastify(fastifyOptions)
   root.decorate('platformatic', { configManager, config })
   await root.register(app, { context })
-  if (!root.hasRoute({ url: '/', method: 'GET' })) {
+  if (!root.hasRoute({ url: '/', method: 'GET' }) && !root.hasRoute({ url: '/*', method: 'GET' })) {
     await root.register(require('./root-endpoint'))
   }
 
@@ -56,11 +56,24 @@ async function createServer (serverContext) {
   return root
 }
 async function buildConfigManager (options, app) {
+  const loggerInstance = options.server?.loggerInstance
+  if (loggerInstance) {
+    delete options.server.loggerInstance
+    options.server ||= {}
+    options.server.logger = { level: loggerInstance.level }
+  }
+
   let configManager = options.configManager
   if (!configManager) {
     // instantiate a new config manager from current options
     configManager = new ConfigManager({ ...app.configManagerConfig, source: options })
     await configManager.parseAndValidate()
+  }
+
+  if (loggerInstance) {
+    configManager.current.server ||= {}
+    delete configManager.current.server.logger
+    configManager.current.server.loggerInstance = loggerInstance
   }
   return configManager
 }
@@ -90,13 +103,13 @@ async function buildServer (options, app, context) {
     context
   }
   const handler = await createServer(serverContext)
-  handler.decorate('start', async () => {
+  handler.start = async function () {
     serverContext.url = await handler.listen({
       host: options.server?.hostname || '127.0.0.1',
       port: options.server?.port || 0,
     })
     return serverContext.url
-  })
+  }
   configManager.on('error', function (err) {
     /* c8 ignore next 1 */
     handler.log.error({ err }, 'error reloading the configuration')

@@ -28,19 +28,10 @@ class ComposerStackable extends ServiceStackable {
     let url = this.#getServiceUrl(id)
 
     if (urlString) {
-      try {
-        const remoteUrl = await this.configManager.replaceEnv(urlString)
+      const remoteUrl = await this.configManager.replaceEnv(urlString)
 
-        if (remoteUrl) {
-          url = remoteUrl
-        }
-      } catch (err) {
-        // The MissingValueError is an error coming from pupa
-        // https://github.com/sindresorhus/pupa#missingvalueerror
-        // All other errors are simply re-thrown.
-        if (err.name !== 'MissingValueError' || urlString !== `{${err.key}}`) {
-          throw err
-        }
+      if (remoteUrl) {
+        url = remoteUrl
       }
     }
 
@@ -52,9 +43,12 @@ class ComposerStackable extends ServiceStackable {
   }
 
   async getMeta () {
+    const serviceMeta = super.getMeta()
+    const composerMeta = this.#meta ? { composer: this.#meta } : undefined
+
     return {
-      ...super.getMeta?.(),
-      composer: this.#meta
+      ...serviceMeta,
+      ...composerMeta
     }
   }
 

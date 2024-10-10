@@ -2,12 +2,12 @@
 
 const { readFile } = require('node:fs/promises')
 const {
-  stripVersion,
   convertServiceNameToPrefix,
   extractEnvVariablesFromText,
   getPackageConfigurationObject,
   PLT_ROOT,
   getLatestNpmVersion,
+  stripVersion,
 } = require('./utils')
 const { join } = require('node:path')
 const { FileGenerator } = require('./file-generator')
@@ -373,7 +373,7 @@ class BaseGenerator extends FileGenerator {
 
   async getPlatformaticVersion () {
     const pkgData = await this.readPackageJsonFile()
-    this.platformaticVersion = stripVersion(pkgData.version)
+    this.platformaticVersion = pkgData.version
   }
 
   async generatePackageJson () {

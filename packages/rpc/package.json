@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/rpc",
-  "version": "2.0.0-alpha.9",
+  "version": "2.5.5-alpha.1",
   "description": "A fastify RPC plugin for typescript applications",
   "main": "index.js",
   "scripts": {
@@ -12,7 +12,7 @@
     "type": "git",
     "url": "git+https://github.com/platformatic/platformatic.git"
   },
-  "author": "Matteo Collina <hello@matteocollina.com>",
+  "author": "Platformatic Inc. <oss@platformatic.dev> (https://platformatic.dev)",
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/platformatic/platformatic/issues"
@@ -21,7 +21,7 @@
   "devDependencies": {
     "borp": "^0.17.0",
     "eslint": "9",
-    "fastify": "5.0.0-alpha.4",
+    "fastify": "^5.0.0",
     "neostandard": "^0.11.1"
   },
   "dependencies": {

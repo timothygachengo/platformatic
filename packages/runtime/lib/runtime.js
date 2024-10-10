@@ -7,12 +7,8 @@ const inspector = require('node:inspector')
 const { join } = require('node:path')
 const { setTimeout: sleep } = require('node:timers/promises')
 const { Worker } = require('node:worker_threads')
-
 const { ITC } = require('@platformatic/itc')
-const {
-  errors: { ensureLoggableError },
-  executeWithTimeout
-} = require('@platformatic/utils')
+const { ensureLoggableError, executeWithTimeout } = require('@platformatic/utils')
 const ts = require('tail-file-stream')
 const { createThreadInterceptor } = require('undici-thread-interceptor')
 
@@ -22,7 +18,7 @@ const { createLogger } = require('./logger')
 const { startManagementApi } = require('./management-api')
 const { startPrometheusServer } = require('./prom-server')
 const { getRuntimeTmpDir } = require('./utils')
-const { sendViaITC } = require('./worker/itc')
+const { sendViaITC, waitEventFromITC } = require('./worker/itc')
 const { kId, kITC, kConfig } = require('./worker/symbols')
 
 const platformaticVersion = require('../package.json').version
@@ -131,6 +127,9 @@ class Runtime extends EventEmitter {
   }
 
   async start () {
+    if (typeof this.#configManager.current.entrypoint === 'undefined') {
+      throw new errors.MissingEntrypointError()
+    }
     this.#updateStatus('starting')
 
     // Important: do not use Promise.all here since it won't properly manage dependencies
@@ -151,7 +150,7 @@ class Runtime extends EventEmitter {
       this.startCollectingMetrics()
     }
 
-    this.logger.info(`Platformatic is now listening at ${this.#url}`)
+    this.#showUrl()
     return this.#url
   }
 
@@ -176,7 +175,6 @@ class Runtime extends EventEmitter {
 
     this.emit('restarted')
 
-    this.logger.info(`Platformatic is now listening at ${this.#url}`)
     return this.#url
   }
 
@@ -241,7 +239,7 @@ class Runtime extends EventEmitter {
       // TODO: handle port allocation error here
       if (error.code === 'EADDRINUSE') throw error
 
-      this.logger.error({ error: ensureLoggableError(error) }, `Failed to start service "${id}".`)
+      this.logger.error({ err: ensureLoggableError(error) }, `Failed to start service "${id}".`)
 
       const config = this.#configManager.current
       const restartOnError = config.restartOnError
@@ -458,6 +456,10 @@ class Runtime extends EventEmitter {
     }
   }
 
+  getRuntimeEnv () {
+    return this.#configManager.env
+  }
+
   getRuntimeConfig () {
     return this.#configManager.current
   }
@@ -528,6 +530,12 @@ class Runtime extends EventEmitter {
     const service = await this.#getServiceById(id, true)
 
     return sendViaITC(service, 'getServiceConfig')
+  }
+
+  async getServiceEnv (id) {
+    const service = await this.#getServiceById(id, true)
+
+    return sendViaITC(service, 'getServiceEnv')
   }
 
   async getServiceOpenapiSchema (id) {
@@ -724,6 +732,10 @@ class Runtime extends EventEmitter {
     this.emit(status)
   }
 
+  #showUrl () {
+    this.logger.info(`Platformatic is now listening at ${this.#url}`)
+  }
+
   async #setupService (serviceConfig) {
     if (this.#status === 'stopping' || this.#status === 'closed') return
 
@@ -778,7 +790,9 @@ class Runtime extends EventEmitter {
 
       // Wait for the next tick so that crashed from the thread are logged first
       setImmediate(() => {
-        this.logger.warn(`Service "${id}" unexpectedly exited with code ${code}.`)
+        if (!config.watch || code !== 0) {
+          this.logger.warn(`Service "${id}" unexpectedly exited with code ${code}.`)
+        }
 
         // Restart the service if it was started
         if (started && this.#status === 'started') {
@@ -802,7 +816,8 @@ class Runtime extends EventEmitter {
       name: id + '-runtime',
       port: service,
       handlers: {
-        getServiceMeta: this.getServiceMeta.bind(this)
+        getServiceMeta: this.getServiceMeta.bind(this),
+        getServices: this.getServices.bind(this)
       }
     })
     service[kITC].listen()
@@ -822,6 +837,10 @@ class Runtime extends EventEmitter {
         }
 
         this.logger?.info(`Service ${id} has been successfully reloaded ...`)
+
+        if (serviceConfig.entrypoint) {
+          this.#showUrl()
+        }
       } catch (e) {
         this.logger?.error(e)
       }
@@ -839,7 +858,7 @@ class Runtime extends EventEmitter {
     this.#interceptor.route(id, service)
 
     // Store dependencies
-    const [{ dependencies }] = await once(service[kITC], 'init')
+    const [{ dependencies }] = await waitEventFromITC(service, 'init')
 
     if (autoload) {
       serviceConfig.dependencies = dependencies

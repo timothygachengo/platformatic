@@ -1,5 +1,5 @@
 import { ITC, generateNotification } from '@platformatic/itc'
-import { createDirectory, errors } from '@platformatic/utils'
+import { createDirectory, ensureLoggableError } from '@platformatic/utils'
 import { once } from 'node:events'
 import { rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -11,17 +11,18 @@ import { request } from 'undici'
 import { WebSocketServer } from 'ws'
 import { exitCodes } from '../errors.js'
 import { ensureFileUrl } from '../utils.js'
-
 export const isWindows = platform() === 'win32'
 
 // In theory we could use the context.id to namespace even more, but due to
 // UNIX socket length limitation on MacOS, we don't.
-function generateChildrenId (context) {
+export function generateChildrenId (context) {
   return [process.pid, Date.now()].join('-')
 }
 
 export function getSocketPath (id) {
   let socketPath = null
+
+  /* c8 ignore next 7 */
   if (platform() === 'win32') {
     socketPath = `\\\\.\\pipe\\plt-${id}`
   } else {
@@ -43,6 +44,7 @@ export class ChildManager extends ITC {
   #socketPath
   #clients
   #requests
+  #currentSender
   #currentClient
   #listener
   #originalNodeOptions
@@ -59,7 +61,9 @@ export class ChildManager extends ITC {
       ...itcOpts,
       handlers: {
         log: message => {
-          return this.#log(message)
+          /* c8 ignore next */
+          const logs = Array.isArray(message.logs) ? message.logs : [message.logs]
+          this._forwardLogs(logs)
         },
         fetch: request => {
           return this.#fetch(request)
@@ -94,11 +98,14 @@ export class ChildManager extends ITC {
 
       ws.on('message', raw => {
         try {
+          this.#currentSender = ws
           const message = JSON.parse(raw)
           this.#requests.set(message.reqId, ws)
           this.#listener(message)
         } catch (error) {
           this.#handleUnexpectedError(error, 'Handling a message failed.', exitCodes.MANAGER_MESSAGE_HANDLING_FAILED)
+        } finally {
+          this.#currentSender = null
         }
       })
 
@@ -106,6 +113,7 @@ export class ChildManager extends ITC {
         this.#clients.delete(ws)
       })
 
+      /* c8 ignore next 7 */
       ws.on('error', error => {
         this.#handleUnexpectedError(
           error,
@@ -121,13 +129,16 @@ export class ChildManager extends ITC {
   }
 
   async close (signal) {
-    await rm(this.#dataPath)
+    if (this.#dataPath) {
+      await rm(this.#dataPath, { force: true })
+    }
 
     for (const client of this.#clients) {
       this.#currentClient = client
       this._send(generateNotification('close', signal))
     }
 
+    this.#server?.close()
     super.close()
   }
 
@@ -163,16 +174,28 @@ export class ChildManager extends ITC {
     process.env.PLT_MANAGER_ID = ''
   }
 
+  getSocketPath () {
+    return this.#socketPath
+  }
+
+  getClients () {
+    return this.#clients
+  }
+
   register () {
     register(this.#loader, { data: this.#context })
   }
 
-  send (client, name, message) {
-    this.#currentClient = client
-    super.send(name, message)
+  emit (...args) {
+    super.emit(...args, this.#currentSender)
   }
 
-  _send (message) {
+  send (client, name, message) {
+    this.#currentClient = client
+    return super.send(name, message)
+  }
+
+  _send (message, stringify = true) {
     if (!this.#currentClient) {
       this.#currentClient = this.#requests.get(message.reqId)
       this.#requests.delete(message.reqId)
@@ -182,7 +205,7 @@ export class ChildManager extends ITC {
       }
     }
 
-    this.#currentClient.send(JSON.stringify(message))
+    this.#currentClient.send(stringify ? JSON.stringify(message) : message)
     this.#currentClient = null
   }
 
@@ -198,8 +221,8 @@ export class ChildManager extends ITC {
     this.#server.close()
   }
 
-  #log (message) {
-    const logs = Array.isArray(message.logs) ? message.logs : [message.logs]
+  /* c8 ignore next 3 */
+  _forwardLogs (logs) {
     workerData.loggingPort.postMessage({ logs: logs.map(m => JSON.stringify(m)) })
   }
 
@@ -213,7 +236,7 @@ export class ChildManager extends ITC {
   }
 
   #handleUnexpectedError (error, message, exitCode) {
-    this.#logger.error({ err: errors.ensureLoggableError(error) }, message)
+    this.#logger.error({ err: ensureLoggableError(error) }, message)
     process.exit(exitCode)
   }
 }

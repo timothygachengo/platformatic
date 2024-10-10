@@ -1,10 +1,12 @@
 {
   "name": "@platformatic/basic",
-  "version": "2.0.0-alpha.9",
+  "version": "2.5.5-alpha.1",
   "description": "",
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "test": "npm run lint && borp --concurrency=1 --no-timeout",
+    "coverage": "npm run lint && borp -C -X test -X test/fixtures --concurrency=1 --no-timeout",
     "gen-schema": "node lib/schema.js > schema.json",
     "gen-types": "json2ts > config.d.ts < schema.json",
     "build": "pnpm run gen-schema && pnpm run gen-types",
@@ -15,7 +17,7 @@
     "type": "git",
     "url": "git+https://github.com/platformatic/platformatic.git"
   },
-  "author": "Paolo Insogna <paolo@cowtech.it>",
+  "author": "Platformatic Inc. <oss@platformatic.dev> (https://platformatic.dev)",
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/platformatic/platformatic/issues"
@@ -25,6 +27,8 @@
     "@fastify/error": "^4.0.0",
     "@platformatic/config": "workspace:*",
     "@platformatic/itc": "workspace:*",
+    "@platformatic/telemetry": "workspace:*",
+    "@platformatic/metrics": "workspace:*",
     "@platformatic/utils": "workspace:*",
     "execa": "^9.3.1",
     "pino": "^9.3.2",
@@ -35,12 +39,10 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@platformatic/composer": "workspace:*",
-    "@platformatic/service": "workspace:*",
     "borp": "^0.17.0",
     "eslint": "9",
     "express": "^4.19.2",
-    "fastify": "5.0.0-alpha.4",
+    "fastify": "^5.0.0",
     "json-schema-to-typescript": "^15.0.0",
     "neostandard": "^0.11.1",
     "next": "^14.2.5",

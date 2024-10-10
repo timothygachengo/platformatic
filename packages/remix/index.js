@@ -90,7 +90,7 @@ export class RemixStackable extends ViteStackable {
   }
 
   async stop () {
-    if (this.subprocess) {
+    if (this.childManager) {
       return this.stopCommand()
     }
 
@@ -150,7 +150,7 @@ export class RemixStackable extends ViteStackable {
       composer: {
         tcp: typeof this.url !== 'undefined',
         url: this.url,
-        prefix: this.#basePath,
+        prefix: this.basePath ?? this.#basePath,
         wantsAbsoluteUrls: true,
         needsRootRedirect: true
       }
@@ -222,7 +222,13 @@ function transformConfig () {
 export async function buildStackable (opts) {
   const root = opts.context.directory
 
-  const configManager = new ConfigManager({ schema, source: opts.config ?? {}, schemaOptions, transformConfig })
+  const configManager = new ConfigManager({
+    schema,
+    source: opts.config ?? {},
+    schemaOptions,
+    transformConfig,
+    dirname: root
+  })
   await configManager.parseAndValidate()
 
   return new RemixStackable(opts, root, configManager)

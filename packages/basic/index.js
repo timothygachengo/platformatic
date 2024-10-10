@@ -7,13 +7,34 @@ import pino from 'pino'
 import { packageJson, schema } from './lib/schema.js'
 import { importFile } from './lib/utils.js'
 
+const importStackablePackageMarker = '__pltImportStackablePackage.js'
+
+export const configCandidates = [
+  'platformatic.application.json',
+  'platformatic.json',
+  'watt.json',
+  'platformatic.application.yaml',
+  'platformatic.yaml',
+  'watt.yaml',
+  'platformatic.application.yml',
+  'platformatic.yml',
+  'watt.yml',
+  'platformatic.application.toml',
+  'platformatic.toml',
+  'watt.toml',
+  'platformatic.application.tml',
+  'platformatic.tml',
+  'watt.tml'
+]
+
 function isImportFailedError (error, pkg) {
-  if (error.code !== 'ERR_MODULE_NOT_FOUND') {
+  if (error.code !== 'ERR_MODULE_NOT_FOUND' && error.code !== 'MODULE_NOT_FOUND') {
     return false
   }
 
   const match = error.message.match(/Cannot find package '(.+)' imported from (.+)/)
-  return match?.[1] === pkg
+
+  return match?.[1] === pkg || error.requireStack?.[0].endsWith(importStackablePackageMarker)
 }
 
 async function importStackablePackage (opts, pkg, autodetectDescription) {
@@ -27,7 +48,7 @@ async function importStackablePackage (opts, pkg, autodetectDescription) {
       }
 
       // Scope to the service
-      const require = createRequire(resolve(opts.context.directory, 'index.js'))
+      const require = createRequire(resolve(opts.context.directory, importStackablePackageMarker))
       const imported = require.resolve(pkg)
       return await importFile(imported)
     }
@@ -36,17 +57,10 @@ async function importStackablePackage (opts, pkg, autodetectDescription) {
       throw e
     }
 
-    const rootFolder = relative(process.cwd(), workerData.dirname)
-
-    let errorMessage = `Unable to import package, "${pkg}". Please add it as a dependency `
-
-    if (rootFolder) {
-      errorMessage += `in the package.json file in the folder ${rootFolder}.`
-    } else {
-      errorMessage += 'in the root package.json file.'
-    }
-
-    throw new Error(errorMessage)
+    const serviceDirectory = relative(workerData.dirname, opts.context.directory)
+    throw new Error(
+      `Unable to import package '${pkg}'. Please add it as a dependency  in the package.json file in the folder ${serviceDirectory}.`
+    )
   }
 }
 
@@ -65,10 +79,13 @@ async function buildStackable (opts) {
   const hadConfig = opts.config
 
   if (!hadConfig) {
-    const candidate = resolve(root, 'platformatic.application.json')
+    for (const candidate of configCandidates) {
+      const candidatePath = resolve(root, candidate)
 
-    if (existsSync(candidate)) {
-      opts.config = candidate
+      if (existsSync(candidatePath)) {
+        opts.config = candidatePath
+        break
+      }
     }
   }
 
@@ -91,7 +108,10 @@ async function buildStackable (opts) {
   const imported = await importStackablePackage(opts, toImport, autodetectDescription)
 
   const serviceRoot = relative(process.cwd(), opts.context.directory)
-  if (!hadConfig && !existsSync(resolve(serviceRoot, 'platformatic.application.json'))) {
+  if (
+    !hadConfig &&
+    !existsSync(resolve(serviceRoot, 'platformatic.json') || existsSync(resolve(serviceRoot, 'watt.json')))
+  ) {
     const logger = pino({
       level: opts.context.serverConfig?.logger?.level ?? 'warn',
       name: opts.context.serviceId
@@ -100,7 +120,7 @@ async function buildStackable (opts) {
     logger.warn(
       [
         `Platformatic has auto-detected that service ${opts.context.serviceId} ${autodetectDescription}.\n`,
-        `We suggest you create a platformatic.application.json file in the folder ${serviceRoot} with the "$schema" `,
+        `We suggest you create a platformatic.json or watt.json file in the folder ${serviceRoot} with the "$schema" `,
         `property set to "https://schemas.platformatic.dev/${toImport}/${packageJson.version}.json".`
       ].join('')
     )

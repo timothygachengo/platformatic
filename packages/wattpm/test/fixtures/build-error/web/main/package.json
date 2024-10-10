@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "build": "tsc -p non-existent.json"
+  },
+  "dependencies": {
+    "@platformatic/node": "^2.3.1"
+  }
+}

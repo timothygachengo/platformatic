@@ -8,18 +8,36 @@ const ConfigManager = require('@platformatic/config')
 const errors = require('./errors')
 const { schema } = require('./schema')
 const upgrade = require('./upgrade')
+const { parseArgs } = require('node:util')
 
-const kServicesAutoloaded = Symbol('plt.servicesAutoloaded')
-
-async function _transformConfig (configManager) {
+async function _transformConfig (configManager, args) {
   const config = configManager.current
-  const services = config.services ?? []
 
-  if (config.autoload) {
-    if (config.services && !config.services[kServicesAutoloaded]) {
-      throw new errors.InvalidAutoloadWithServicesError()
+  let services
+  if (config.web?.length) {
+    if (config.services?.length) {
+      throw new errors.InvalidServicesWithWebError()
     }
 
+    services = config.web
+  } else {
+    services = config.services ?? []
+  }
+
+  const watchType = typeof config.watch
+  if (watchType === 'string') {
+    config.watch = config.watch === 'true'
+  } else if (watchType === 'undefined') {
+    const { values } = parseArgs({
+      args,
+      strict: false,
+      options: { production: { type: 'boolean', short: 'p', default: false } }
+    })
+
+    config.watch = !values.production
+  }
+
+  if (config.autoload) {
     const { exclude = [], mappings = {} } = config.autoload
     let { path } = config.autoload
 
@@ -41,13 +59,13 @@ async function _transformConfig (configManager) {
       const mapping = mappings[entry.name] ?? {}
       const id = mapping.id ?? entry.name
       const entryPath = join(path, entry.name)
-      const configFilename = mapping.config ?? await ConfigManager.findConfigFile(entryPath)
 
-      if (typeof configFilename !== 'string') {
-        throw new errors.NoConfigFileFoundError(id)
+      let config
+      const configFilename = mapping.config ?? (await ConfigManager.findConfigFile(entryPath))
+
+      if (typeof configFilename === 'string') {
+        config = join(entryPath, configFilename)
       }
-
-      const config = join(entryPath, configFilename)
 
       const service = { id, config, path: entryPath, useHttp: !!mapping.useHttp }
       const existingServiceId = services.findIndex(service => service.id === id)
@@ -72,10 +90,13 @@ async function _transformConfig (configManager) {
       service.config = pathResolve(service.path, service.config)
     }
     service.entrypoint = service.id === config.entrypoint
-    service.watch = !!config.watch
     service.dependencies = []
     service.localServiceEnvVars = new Map()
     service.localUrl = `http://${service.id}.plt.local`
+
+    if (typeof service.watch === 'undefined') {
+      service.watch = config.watch
+    }
 
     if (service.entrypoint) {
       hasValidEntrypoint = true
@@ -84,12 +105,53 @@ async function _transformConfig (configManager) {
     configManager.current.serviceMap.set(service.id, service)
   }
 
+  // If there is no entrypoint, autodetect one
+  if (!config.entrypoint) {
+    // If there is only one service, it becomes the entrypoint
+    if (services.length === 1) {
+      services[0].entrypoint = true
+      config.entrypoint = services[0].id
+      hasValidEntrypoint = true
+    } else {
+      // Search if exactly service uses @platformatic/composer
+      const composers = []
+
+      for (const service of services) {
+        if (!service.config) {
+          continue
+        }
+
+        const manager = new ConfigManager({ source: pathResolve(service.path, service.config) })
+        await manager.parse()
+        const config = manager.current
+        const type = config.$schema ? ConfigManager.matchKnownSchema(config.$schema) : undefined
+
+        if (type === 'composer') {
+          composers.push(service.id)
+        }
+      }
+
+      if (composers.length === 1) {
+        services.find(s => s.id === composers[0]).entrypoint = true
+        config.entrypoint = composers[0]
+        hasValidEntrypoint = true
+      }
+    }
+  }
+
   if (!hasValidEntrypoint) {
-    throw new errors.InvalidEntrypointError(config.entrypoint)
+    if (config.entrypoint) {
+      throw new errors.InvalidEntrypointError(config.entrypoint)
+    } else if (services.length >= 1) {
+      throw new errors.MissingEntrypointError()
+    }
+    // If there are no services, and no entrypoint it's an empty app.
+    // It won't start, but we should be able to parse and operate on it,
+    // like adding other services.
   }
 
   configManager.current.services = services
-  configManager.current.services[kServicesAutoloaded] = true
+  configManager.current.web = undefined
 
   if (configManager.current.restartOnError === true) {
     configManager.current.restartOnError = 5000
@@ -111,12 +173,12 @@ platformaticRuntime.configManagerConfig = {
     useDefaults: true,
     coerceTypes: true,
     allErrors: true,
-    strict: false,
+    strict: false
   },
-  async transformConfig () {
-    await _transformConfig(this)
+  async transformConfig (args) {
+    await _transformConfig(this, args)
   },
-  upgrade,
+  upgrade
 }
 
 async function wrapConfigInRuntimeConfig ({ configManager, args }) {
@@ -140,9 +202,9 @@ async function wrapConfigInRuntimeConfig ({ configManager, args }) {
       {
         id: serviceId,
         path: configManager.dirname,
-        config: configManager.fullPath,
-      },
-    ],
+        config: configManager.fullPath
+      }
+    ]
   }
   const cm = new ConfigManager({
     source: wrapperConfig,
@@ -151,9 +213,11 @@ async function wrapConfigInRuntimeConfig ({ configManager, args }) {
       useDefaults: true,
       coerceTypes: true,
       allErrors: true,
-      strict: false,
+      strict: false
     },
-    transformConfig () { return _transformConfig(this) },
+    transformConfig (args) {
+      return _transformConfig(this, args)
+    }
   })
 
   await cm.parseAndValidate()
@@ -205,7 +269,7 @@ function parseInspectorOptions (configManager) {
       host,
       port,
       breakFirstLine: hasInspectBrk,
-      watchDisabled: !!current.watch,
+      watchDisabled: !!current.watch
     }
 
     current.watch = false
@@ -215,5 +279,5 @@ function parseInspectorOptions (configManager) {
 module.exports = {
   parseInspectorOptions,
   platformaticRuntime,
-  wrapConfigInRuntimeConfig,
+  wrapConfigInRuntimeConfig
 }

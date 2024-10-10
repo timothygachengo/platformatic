@@ -1,6 +1,6 @@
 {
   "name": "create-platformatic",
-  "version": "2.0.0-alpha.9",
+  "version": "2.5.5-alpha.1",
   "description": "Create platformatic application interactive tool",
   "repository": {
     "type": "git",
@@ -10,7 +10,7 @@
     ".": "./create-platformatic.mjs"
   },
   "bin": {
-    "create-platformatic-auto": "./create-platformatic.mjs"
+    "create-platformatic": "./create-platformatic.mjs"
   },
   "scripts": {
     "test:cli": "borp --pattern \"test/cli/*test.mjs\" --timeout=180000 --concurrency=1",
@@ -19,7 +19,7 @@
     "lint": "eslint"
   },
   "license": "Apache-2.0",
-  "author": "Matteo Collina <hello@matteocollina.com>",
+  "author": "Platformatic Inc. <oss@platformatic.dev> (https://platformatic.dev)",
   "dependencies": {
     "@platformatic/config": "workspace:*",
     "@platformatic/generators": "workspace:*",
@@ -57,7 +57,7 @@
     "dotenv": "^16.4.5",
     "eslint": "9",
     "esmock": "^2.6.4",
-    "fastify": "5.0.0-alpha.4",
+    "fastify": "^5.0.0",
     "neostandard": "^0.11.1",
     "typescript": "~5.6.0",
     "yaml": "^2.4.1"

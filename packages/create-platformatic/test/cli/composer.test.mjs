@@ -26,10 +26,6 @@ test('Creates a Platformatic Composer', { timeout }, async t => {
   // The actions must match IN ORDER
   const actions = [
     {
-      match: 'What kind of project do you want to create?',
-      do: [keys.ENTER], // Application
-    },
-    {
       match: 'Where would you like to create your project?',
       do: [keys.ENTER],
       waitAfter: 8000,
@@ -79,6 +75,6 @@ test('Creates a Platformatic Composer', { timeout }, async t => {
   console.log(baseServiceDir)
   equal(await isFileAccessible(join(baseServiceDir, 'platformatic.json')), true)
   equal(await isFileAccessible(join(baseServiceDir, 'README.md')), true)
-  equal(await isFileAccessible(join(baseServiceDir, 'routes', 'root.js')), true)
-  equal(await isFileAccessible(join(baseServiceDir, 'plugins', 'example.js')), true)
+  equal(await isFileAccessible(join(baseServiceDir, 'routes', 'root.js')), false)
+  equal(await isFileAccessible(join(baseServiceDir, 'plugins', 'example.js')), false)
 })

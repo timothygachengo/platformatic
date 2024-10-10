@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/generators",
-  "version": "2.0.0-alpha.9",
+  "version": "2.5.5-alpha.1",
   "description": "Main classes and utils for generators.",
   "main": "index.js",
   "scripts": {
@@ -8,14 +8,14 @@
     "test": "pnpm run lint && borp --timeout=180000 -C -X fixtures -X test --concurrency=1 && tsd"
   },
   "keywords": [],
-  "author": "",
+  "author": "Platformatic Inc. <oss@platformatic.dev> (https://platformatic.dev)",
   "license": "Apache-2.0",
   "dependencies": {
     "@platformatic/utils": "workspace:*",
     "@fastify/error": "^4.0.0",
     "boring-name-generator": "^1.0.3",
     "change-case-all": "^2.1.0",
-    "fastify": "5.0.0-alpha.4",
+    "fastify": "^5.0.0",
     "pino": "^9.0.0",
     "undici": "^6.9.0"
   },

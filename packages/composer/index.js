@@ -15,6 +15,9 @@ const { isSameGraphqlSchema, fetchGraphqlSubgraphs } = require('./lib/graphql-fe
 const { isFetchable } = require('./lib/utils')
 const { ComposerStackable } = require('./lib/stackable')
 const errors = require('./lib/errors')
+const upgrade = require('./lib/upgrade')
+
+const kITC = Symbol.for('plt.runtime.itc')
 
 const EXPERIMENTAL_GRAPHQL_COMPOSER_FEATURE_MESSAGE = 'graphql composer is an experimental feature'
 
@@ -23,7 +26,27 @@ async function platformaticComposer (app, opts) {
   const config = configManager.current
   let hasGraphqlServices, hasOpenapiServices
 
+  // When no services are specified, get the list from the runtime.
+  if (!configManager.current.composer.services?.length) {
+    const itcResponse = await globalThis[kITC]?.send('getServices')
+
+    if (itcResponse) {
+      // Remove ourself from the services
+      configManager.current.composer.services = itcResponse.services
+        .map(service => {
+          // Remove ourself
+          if (service.id === opts.context.serviceId) {
+            return null
+          }
+
+          return { id: service.id, proxy: {} }
+        })
+        .filter(f => f)
+    }
+  }
+
   const { services } = configManager.current.composer
+
   for (const service of services) {
     if (!service.origin) {
       service.origin = `http://${service.id}.plt.local`
@@ -53,7 +76,7 @@ async function platformaticComposer (app, opts) {
     await app.register(graphqlGenerator, config.composer)
   }
 
-  if (!app.hasRoute({ url: '/', method: 'GET' })) {
+  if (!app.hasRoute({ url: '/', method: 'GET' }) && !app.hasRoute({ url: '/*', method: 'GET' })) {
     await app.register(require('./lib/root-endpoint'), config)
   }
 
@@ -75,7 +98,8 @@ platformaticComposer.configManagerConfig = {
     allErrors: true,
     strict: false
   },
-  transformConfig: platformaticService.configManagerConfig.transformConfig
+  transformConfig: platformaticService.configManagerConfig.transformConfig,
+  upgrade
 }
 
 // TODO review no need to be async

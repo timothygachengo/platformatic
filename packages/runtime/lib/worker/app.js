@@ -1,13 +1,15 @@
 'use strict'
 
+const { existsSync } = require('node:fs')
 const { EventEmitter } = require('node:events')
+const { resolve } = require('node:path')
+const { ConfigManager } = require('@platformatic/config')
 const { FileWatcher } = require('@platformatic/utils')
 const { getGlobalDispatcher, setGlobalDispatcher } = require('undici')
 const debounce = require('debounce')
 
 const errors = require('../errors')
 const defaultStackable = require('./default-stackable')
-const { collectMetrics } = require('./metrics')
 const { getServiceUrl, loadConfig, loadEmptyConfig } = require('../utils')
 
 class PlatformaticApp extends EventEmitter {
@@ -16,11 +18,10 @@ class PlatformaticApp extends EventEmitter {
   #listening
   #watch
   #fileWatcher
-  #metricsRegistry
   #debouncedRestart
   #context
 
-  constructor (appConfig, telemetryConfig, serverConfig, hasManagementApi, watch, metricsConfig) {
+  constructor (appConfig, telemetryConfig, loggerConfig, serverConfig, metricsConfig, hasManagementApi, watch) {
     super()
     this.appConfig = appConfig
     this.#watch = watch
@@ -29,7 +30,6 @@ class PlatformaticApp extends EventEmitter {
     this.#listening = false
     this.stackable = null
     this.#fileWatcher = null
-    this.#metricsRegistry = null
 
     this.#context = {
       serviceId: this.appConfig.id,
@@ -38,6 +38,7 @@ class PlatformaticApp extends EventEmitter {
       isProduction: this.appConfig.isProduction,
       telemetryConfig,
       metricsConfig,
+      loggerConfig,
       serverConfig,
       hasManagementApi: !!hasManagementApi,
       localServiceEnvVars: this.appConfig.localServiceEnvVars
@@ -65,6 +66,16 @@ class PlatformaticApp extends EventEmitter {
     try {
       const appConfig = this.appConfig
       let loadedConfig
+
+      // Before returning the base application, check if there is any file we recognize
+      // and the user just forgot to specify in the configuration.
+      if (!appConfig.config) {
+        const candidate = ConfigManager.listConfigFiles().find(f => existsSync(resolve(appConfig.path, f)))
+
+        if (candidate) {
+          appConfig.config = resolve(appConfig.path, candidate)
+        }
+      }
 
       if (!appConfig.config) {
         loadedConfig = await loadEmptyConfig(
@@ -100,18 +111,18 @@ class PlatformaticApp extends EventEmitter {
       })
       this.stackable = this.#wrapStackable(stackable)
 
-      const metricsConfig = this.#context.metricsConfig
-      if (metricsConfig !== false) {
-        this.#metricsRegistry = await collectMetrics(
-          this.stackable,
-          this.appConfig.id,
-          metricsConfig
-        )
-      }
+      this.once('start', () => {
+        this.stackable.collectMetrics()
+      })
 
       this.#updateDispatcher()
     } catch (err) {
-      this.#logAndExit(err)
+      if (err.validationErrors) {
+        console.error('Validation errors:', err.validationErrors)
+        process.exit(1)
+      } else {
+        this.#logAndExit(err)
+      }
     }
   }
 
@@ -181,11 +192,7 @@ class PlatformaticApp extends EventEmitter {
   }
 
   async getMetrics ({ format }) {
-    if (!this.#metricsRegistry) return null
-
-    return format === 'json'
-      ? this.#metricsRegistry.getMetricsAsJSON()
-      : this.#metricsRegistry.metrics()
+    return this.stackable.getMetrics({ format })
   }
 
   #fetchServiceUrl (key, { parent, context: service }) {
@@ -228,8 +235,7 @@ class PlatformaticApp extends EventEmitter {
   }
 
   #logAndExit (err) {
-    // Runtime logs here with console.error because stackable is not initialized
-    console.error(err.message)
+    console.error(err)
     process.exit(1)
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/node",
-  "version": "2.0.0-alpha.9",
+  "version": "2.5.5-alpha.1",
   "description": "Platformatic Node.js Stackable",
   "main": "index.js",
   "type": "module",
@@ -17,7 +17,7 @@
     "type": "git",
     "url": "git+https://github.com/platformatic/platformatic.git"
   },
-  "author": "Paolo Insogna <paolo@cowtech.it>",
+  "author": "Platformatic Inc. <oss@platformatic.dev> (https://platformatic.dev)",
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/platformatic/platformatic/issues"
@@ -27,6 +27,7 @@
     "@platformatic/basic": "workspace:*",
     "@platformatic/config": "workspace:*",
     "@platformatic/utils": "workspace:*",
+    "@platformatic/telemetry": "workspace:*",
     "light-my-request": "^6.0.0"
   },
   "devDependencies": {
@@ -35,8 +36,9 @@
     "borp": "^0.17.0",
     "express": "^4.19.2",
     "eslint": "9",
-    "fastify": "5.0.0-alpha.4",
+    "fastify": "^5.0.0",
     "json-schema-to-typescript": "^15.0.1",
+    "koa": "^2.15.3",
     "neostandard": "^0.11.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"

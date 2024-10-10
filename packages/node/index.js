@@ -10,6 +10,7 @@ import {
   transformConfig
 } from '@platformatic/basic'
 import { ConfigManager } from '@platformatic/config'
+import { setupNodeHTTPTelemetry } from '@platformatic/telemetry'
 import inject from 'light-my-request'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -39,12 +40,18 @@ function isFastify (app) {
   return Object.getOwnPropertySymbols(app).some(s => s.description === 'fastify.state')
 }
 
+function isKoa (app) {
+  return typeof app.callback === 'function'
+}
+
 export class NodeStackable extends BaseStackable {
   #module
   #app
   #server
+  #basePath
   #dispatcher
   #isFastify
+  #isKoa
 
   constructor (options, root, configManager) {
     super('nodejs', packageJson.version, options, root, configManager)
@@ -75,7 +82,7 @@ export class NodeStackable extends BaseStackable {
     const finalEntrypoint = await this._findEntrypoint()
 
     // Require the application
-    const basePath = config.application?.basePath
+    this.#basePath = config.application?.basePath
       ? ensureTrailingSlash(cleanBasePath(config.application?.basePath))
       : undefined
 
@@ -83,27 +90,40 @@ export class NodeStackable extends BaseStackable {
       // Always use URL to avoid serialization problem in Windows
       id: this.id,
       root: pathToFileURL(this.root).toString(),
-      basePath,
+      basePath: this.#basePath,
       logLevel: this.logger.level
     })
 
     // The server promise must be created before requiring the entrypoint even if it's not going to be used
     // at all. Otherwise there is chance we miss the listen event.
     const serverOptions = this.serverConfig
-    const serverPromise = createServerListener((this.isEntrypoint ? serverOptions?.port : undefined) ?? true)
+    const serverPromise = createServerListener(
+      (this.isEntrypoint ? serverOptions?.port : undefined) ?? true,
+      (this.isEntrypoint ? serverOptions?.hostname : undefined) ?? true
+    )
+    // If telemetry is set, configure it
+    const telemetryConfig = this.telemetryConfig
+    if (telemetryConfig) {
+      setupNodeHTTPTelemetry(telemetryConfig, this.logger)
+    }
     this.#module = await importFile(finalEntrypoint)
     this.#module = this.#module.default || this.#module
 
     // Deal with application
-    if (typeof this.#module.build === 'function') {
+    const factory = ['build', 'create'].find(f => typeof this.#module[f] === 'function')
+
+    if (factory) {
       // We have build function, this Stackable will not use HTTP unless it is the entrypoint
       serverPromise.cancel()
 
-      this.#app = await this.#module.build()
+      this.#app = await this.#module[factory]()
       this.#isFastify = isFastify(this.#app)
+      this.#isKoa = isKoa(this.#app)
 
       if (this.#isFastify) {
         await this.#app.ready()
+      } else if (this.#isKoa) {
+        this.#dispatcher = this.#app.callback()
       } else if (this.#app instanceof Server) {
         this.#server = this.#app
         this.#dispatcher = this.#server.listeners('request')[0]
@@ -118,7 +138,7 @@ export class NodeStackable extends BaseStackable {
   }
 
   async stop () {
-    if (this.subprocess) {
+    if (this.childManager) {
       return this.stopCommand()
     }
 
@@ -154,7 +174,7 @@ export class NodeStackable extends BaseStackable {
     const hasBuildScript = await this.#hasBuildScript()
 
     if (!hasBuildScript) {
-      this.logger.warn(
+      this.logger.debug(
         'No "application.commands.build" configuration value specified and no build script found in package.json. Skipping build ...'
       )
       return
@@ -167,11 +187,32 @@ export class NodeStackable extends BaseStackable {
     let res
 
     if (this.url) {
+      this.logger.trace({ injectParams, url: this.url }, 'injecting via request')
       res = await injectViaRequest(this.url, injectParams, onInject)
-    } else if (this.#isFastify) {
-      res = await this.#app.inject(injectParams, onInject)
     } else {
-      res = await inject(this.#dispatcher ?? this.#app, injectParams, onInject)
+      if (this.startHttpTimer && this.endHttpTimer) {
+        this.startHttpTimer({ request: injectParams })
+
+        if (onInject) {
+          const originalOnInject = onInject
+          onInject = (err, response) => {
+            this.endHttpTimer({ request: injectParams, response })
+            originalOnInject(err, response)
+          }
+        }
+      }
+
+      if (this.#isFastify) {
+        this.logger.trace({ injectParams }, 'injecting via fastify')
+        res = await this.#app.inject(injectParams, onInject)
+      } else {
+        this.logger.trace({ injectParams }, 'injecting via light-my-request')
+        res = await inject(this.#dispatcher ?? this.#app, injectParams, onInject)
+      }
+
+      if (this.endHttpTimer && !onInject) {
+        this.endHttpTimer({ request: injectParams, response: res })
+      }
     }
 
     /* c8 ignore next 3 */
@@ -185,23 +226,21 @@ export class NodeStackable extends BaseStackable {
     return { statusCode, headers, body, payload, rawPayload }
   }
 
-  getMeta () {
+  _getWantsAbsoluteUrls () {
     const config = this.configManager.current
-    let composer = { prefix: this.servicePrefix, wantsAbsoluteUrls: true, needsRootRedirect: true }
+    return config.node.absoluteUrl
+  }
 
-    if (this.url) {
-      composer = {
-        tcp: true,
+  getMeta () {
+    return {
+      composer: {
+        tcp: typeof this.url !== 'undefined',
         url: this.url,
-        prefix: config.application?.basePath
-          ? ensureTrailingSlash(cleanBasePath(config.application?.basePath))
-          : this.servicePrefix,
-        wantsAbsoluteUrls: true,
+        prefix: this.basePath ?? this.#basePath,
+        wantsAbsoluteUrls: this._getWantsAbsoluteUrls(),
         needsRootRedirect: true
       }
     }
-
-    return { composer }
   }
 
   async _listen () {
@@ -211,7 +250,7 @@ export class NodeStackable extends BaseStackable {
       await this.#app.listen({ host: serverOptions?.hostname || '127.0.0.1', port: serverOptions?.port || 0 })
       this.url = getServerUrl(this.#app.server)
     } else {
-      // Express / Node
+      // Express / Node / Koa
       this.#server = await new Promise((resolve, reject) => {
         return this.#app
           .listen({ host: serverOptions?.hostname || '127.0.0.1', port: serverOptions?.port || 0 }, function () {
@@ -234,8 +273,8 @@ export class NodeStackable extends BaseStackable {
     const config = this.configManager.current
     const outputRoot = resolve(this.root, config.application.outputDirectory)
 
-    if (config.node.entrypoint) {
-      return pathResolve(this.root, config.node.entrypoint)
+    if (config.node.main) {
+      return pathResolve(this.root, config.node.main)
     }
 
     const { entrypoint, hadEntrypointField } = await getEntrypointInformation(this.root)
@@ -333,7 +372,13 @@ async function getEntrypointInformation (root) {
 export async function buildStackable (opts) {
   const root = opts.context.directory
 
-  const configManager = new ConfigManager({ schema, source: opts.config ?? {}, schemaOptions, transformConfig })
+  const configManager = new ConfigManager({
+    schema,
+    source: opts.config ?? {},
+    schemaOptions,
+    transformConfig,
+    dirname: root
+  })
   await configManager.parseAndValidate()
 
   return new NodeStackable(opts, root, configManager)

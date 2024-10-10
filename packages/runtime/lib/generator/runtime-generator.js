@@ -162,15 +162,15 @@ class RuntimeGenerator extends BaseGenerator {
       entrypoint: this.entryPoint.name,
       watch: true,
       autoload: {
-        path: 'services',
+        path: this.config.autoload || 'services',
         exclude: ['docs'],
+      },
+      logger: {
+        level: '{PLT_SERVER_LOGGER_LEVEL}',
       },
       server: {
         hostname: '{PLT_SERVER_HOSTNAME}',
-        port: '{PORT}',
-        logger: {
-          level: '{PLT_SERVER_LOGGER_LEVEL}',
-        },
+        port: '{PORT}'
       },
       managementApi: '{PLT_MANAGEMENT_API}',
     }
@@ -254,7 +254,13 @@ class RuntimeGenerator extends BaseGenerator {
         // set default config
         service.setConfig()
       }
-      service.setTargetDirectory(join(this.targetDirectory, 'services', service.config.serviceName))
+      let basePath
+      if (this.existingConfig) {
+        basePath = this.existingConfig.autoload.path
+      } else {
+        basePath = join(this.targetDirectory, this.config.autoload || 'services')
+      }
+      service.setTargetDirectory(join(basePath, service.config.serviceName))
     })
   }
 

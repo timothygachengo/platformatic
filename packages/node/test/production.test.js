@@ -66,6 +66,12 @@ const configurations = [
     checks: [verifyApplicationOnAutodetectedPrefix, verifyPlatformaticComposer, verifyPlatformaticService]
   },
   {
+    id: 'node-no-configuration-composer-no-services',
+    name: 'Node.js application with (with no configuration files in development mode when exposed in a composer which defines no services)',
+    files: [...nodeESMFiles, ...internalServicesFiles],
+    checks: [verifyApplicationOnPrefix, verifyPlatformaticComposer, verifyPlatformaticService]
+  },
+  {
     id: 'node-no-build-standalone',
     name: 'Node.js application with (with no build function in development mode when standalone)',
     files: nodeCustomBuildFiles,
@@ -209,6 +215,55 @@ const configurations = [
   {
     id: 'fastify-with-build-composer-autodetect-prefix',
     name: 'Fastify with (with a build function in development mode when exposed in a composer by autodetecting the prefix)',
+    files: [...nodeCJSFiles, ...internalServicesFiles],
+    checks: [verifyApplicationOnAutodetectedPrefix, verifyPlatformaticComposer, verifyPlatformaticService]
+  },
+  {
+    id: 'koa-no-build-standalone',
+    name: 'Koa with (with no build function in development mode when standalone)',
+    files: nodeCJSFiles,
+    checks: [verifyStandalone]
+  },
+  {
+    id: 'koa-no-build-composer-with-prefix',
+    name: 'Koa with (with no build function in development mode when exposed in a composer with a prefix)',
+    files: [...nodeCJSFiles, ...internalServicesFiles],
+    checks: [verifyApplicationOnPrefix, verifyPlatformaticComposer, verifyPlatformaticService]
+  },
+  {
+    id: 'koa-no-build-composer-without-prefix',
+    name: 'Koa with (with no build function in development mode when exposed in a composer without a prefix)',
+    files: [...nodeCJSFiles, ...internalServicesFiles],
+    checks: [verifyApplicationOnRoot, verifyPlatformaticComposer, verifyPlatformaticService]
+  },
+  {
+    id: 'koa-no-build-composer-autodetect-prefix',
+    name: 'Koa with (with no build function in development mode when exposed in a composer by autodetecting the prefix)',
+    files: [...nodeCJSFiles, ...internalServicesFiles],
+    checks: [verifyApplicationOnAutodetectedPrefix, verifyPlatformaticComposer, verifyPlatformaticService]
+  },
+  {
+    id: 'koa-with-build-standalone',
+    name: 'Koa with (with a build function in development mode when standalone)',
+    files: nodeCJSFiles,
+    checks: [verifyStandalone]
+  },
+  {
+    only: isCIOnWindows,
+    id: 'koa-with-build-composer-with-prefix',
+    name: 'Koa with (with a build function in development mode when exposed in a composer with a prefix)',
+    files: [...nodeCJSFiles, ...internalServicesFiles],
+    checks: [verifyApplicationOnPrefix, verifyPlatformaticComposer, verifyPlatformaticService]
+  },
+  {
+    id: 'koa-with-build-composer-without-prefix',
+    name: 'Koa with (with a build function in development mode when exposed in a composer without a prefix)',
+    files: [...nodeCJSFiles, ...internalServicesFiles],
+    checks: [verifyApplicationOnRoot, verifyPlatformaticComposer, verifyPlatformaticService]
+  },
+  {
+    id: 'koa-with-build-composer-autodetect-prefix',
+    name: 'Koa with (with a build function in development mode when exposed in a composer by autodetecting the prefix)',
     files: [...nodeCJSFiles, ...internalServicesFiles],
     checks: [verifyApplicationOnAutodetectedPrefix, verifyPlatformaticComposer, verifyPlatformaticService]
   }

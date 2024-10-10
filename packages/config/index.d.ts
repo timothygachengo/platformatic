@@ -97,10 +97,8 @@ export interface StackableInterface {
   getDispatchFunc?: () => Promise<Function>
   getOpenapiSchema?: () => Promise<object>
   getGraphqlSchema?: () => Promise<string>
-  collectMetrics?: ({ registry: object }) => Promise<{
-    defaultMetrics: boolean
-    httpMetrics: boolean
-  }>
+  collectMetrics?: () => Promise<any>
+  getMetrics: ({ format: string }) => Promise<string | Array<object>>
   getMeta?(): () => Promise<object>
   inject?: (injectParams: object) => Promise<{
     statusCode: number
@@ -155,7 +153,6 @@ export module errors {
   export const ConfigurationDoesNotValidateAgainstSchemaError: FastifyError
   export const SourceMissingError: FastifyError
   export const InvalidPlaceholderError: (placeholder: string, suggestion: string) => FastifyError
-  export const EnvVarMissingError: (envVarName: string) => FastifyError
   export const CannotParseConfigFileError: (error: string) => FastifyError
   export const ValidationErrors: (errors: string) => FastifyError
   export const AppMustBeAFunctionError: FastifyError

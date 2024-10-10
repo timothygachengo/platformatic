@@ -1,0 +1,11 @@
+{
+  "main": "api.js",
+  "type": "module",
+  "scripts": {
+    "start": "node api.js"
+  },
+  "dependencies": {
+    "@platformatic/node": "^2.3.1",
+    "express": "^4.19.2"
+  }
+}

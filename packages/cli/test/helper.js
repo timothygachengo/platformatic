@@ -3,7 +3,7 @@ import { join } from 'desm'
 import { execa } from 'execa'
 import fastify from 'fastify'
 import { minimatch } from 'minimatch'
-import { fail, ok } from 'node:assert'
+import { fail, ok, strictEqual } from 'node:assert'
 import { cp, readdir, readFile, writeFile } from 'node:fs/promises'
 import { platform, tmpdir } from 'node:os'
 import { basename, dirname, resolve } from 'node:path'
@@ -36,6 +36,12 @@ export const internalServicesFiles = [
   'services/backend/dist/routes/root.js'
 ]
 
+function diagnostic (t, message) {
+  if (!process.env.CI) {
+    t.diagnostic(message)
+  }
+}
+
 async function ensureExists (path) {
   const directory = dirname(path)
   const pattern = basename(path)
@@ -62,9 +68,20 @@ export function verifyPlatformaticComposer (t, url) {
   return verifyJSONViaHTTP(url, '/example', 200, { hello: 'foobar' })
 }
 
+export function verifyPlatformaticComposerWithProxy (t, url) {
+  return verifyJSONViaHTTP(url, '/external-proxy/example', 200, { hello: 'foobar' })
+}
+
 export async function verifyPlatformaticService (t, url) {
   await verifyJSONViaHTTP(url, '/backend/example', 200, { hello: 'foobar' })
   await verifyJSONViaHTTP(url, '/backend/time', 200, body => {
+    ok(typeof body.time === 'number')
+  })
+}
+
+export async function verifyPlatformaticServiceWithProxy (t, url) {
+  await verifyJSONViaHTTP(url, '/external-proxy/backend/example', 200, { hello: 'foobar' })
+  await verifyJSONViaHTTP(url, '/external-proxy/backend/time', 200, body => {
     ok(typeof body.time === 'number')
   })
 }
@@ -81,6 +98,11 @@ export async function verifyFrontendOnRoot (t, url) {
 export async function verifyFrontendOnPrefix (t, url) {
   await verifyHTMLViaHTTP(url, '/frontend', [htmlHelloMatcher])
   await verifyHTMLViaHTTP(url, '/frontend/', [htmlHelloMatcher])
+}
+
+export async function verifyFrontendOnPrefixWithProxy (t, url) {
+  await verifyHTMLViaHTTP(url, '/external-proxy/frontend', [htmlHelloMatcher])
+  await verifyHTMLViaHTTP(url, '/external-proxy/frontend/', [htmlHelloMatcher])
 }
 
 export async function verifyFrontendOnAutodetectedPrefix (t, url) {
@@ -366,14 +388,17 @@ export function verifyBuildAndProductionMode (workingDirectory, configurations, 
   configurations = filterConfigurations(configurations)
   install(workingDirectory, temporaryWorkingDirectory, configurations, skipInstall)
 
+  let runtimeConfig = null
+
   // Do not move destructuring up here since workingDirectory might the test.before and therefore empty
   for (const configuration of configurations) {
     if (!skipBuild) {
       test(`configuration "${configuration.name}" - should build and create all required files`, async t => {
         const { id, baseWorkingDirectory } = configuration
+        diagnostic(t, `starting build for ${id}`)
         configuration.workingDirectory = resolve(baseWorkingDirectory, id)
 
-        const runtimeConfig = JSON.parse(
+        runtimeConfig = JSON.parse(
           await readFile(resolve(configuration.workingDirectory, 'platformatic.runtime.json'))
         )
 
@@ -390,6 +415,7 @@ export function verifyBuildAndProductionMode (workingDirectory, configurations, 
     }
 
     test(`configuration "${configuration.name}" - should start in production mode`, async t => {
+      diagnostic(t, `starting production for ${configuration.id}`)
       // Start in production mode
       const { url } = await createProductionRuntime(
         t,
@@ -397,9 +423,103 @@ export function verifyBuildAndProductionMode (workingDirectory, configurations, 
         pauseTimeout
       )
 
+      const runtimeHost = runtimeConfig.server?.hostname ?? null
+      const runtimePort = runtimeConfig.server?.port ?? null
+
+      if (runtimeHost) {
+        const actualHost = new URL(url).hostname
+        strictEqual(actualHost, runtimeHost, `hostname should be ${runtimeHost}`)
+      }
+
+      if (runtimePort) {
+        const actualPort = new URL(url).port
+        strictEqual(actualPort.toString(), runtimePort.toString(), `port should be ${runtimePort}`)
+      }
+
       for (const check of configuration.checks) {
         await check(t, url, check)
       }
     })
   }
+}
+
+export async function prepareWorkingDirectorySingleRuntime (t, source, destination) {
+  // This is to fix temporary to a specific directory
+  if (!destination) {
+    destination = resolve(tmpdir(), `test-cli-packages-${process.pid}-${count++}`)
+    t.after(() => safeRemove(destination))
+  }
+
+  // Recreate the folder
+  console.time('Create folder')
+  await safeRemove(destination)
+  await createDirectory(dirname(destination))
+  console.timeEnd('Create folder')
+
+  // Pack packages
+  console.time('Pack packages')
+  const root = fileURLToPath(new URL('../../..', import.meta.url))
+  const overrides = await packPackages(root, destination)
+  console.timeEnd('Pack packages')
+
+  // Copy files
+  console.time('Copy files')
+  await cp(source, destination, { recursive: true })
+  console.timeEnd('Copy files')
+
+  // Start Verdaccio
+  const useVerdaccio = process.env.VERDACCIO === 'true'
+  let verdaccio
+
+  if (useVerdaccio) {
+    verdaccio = await startVerdaccio(root)
+  }
+
+  try {
+    // Override package.json and .npmrc
+    const packageJson = JSON.parse(await readFile(resolve(destination, 'package.json'), 'utf-8'))
+    packageJson.pnpm = { overrides }
+    await writeFile(resolve(destination, 'package.json'), JSON.stringify(packageJson, null, 2), 'utf-8')
+
+    if (useVerdaccio) {
+      await writeFile(
+        resolve(destination, '.npmrc'),
+        `
+registry=http://localhost:${verdaccio.address().port}
+node-linker=hoisted
+package-import-method=copy
+hoist=false
+shamefully-hoist=true
+`,
+        'utf-8'
+      )
+    } else {
+      await writeFile(
+        resolve(destination, '.npmrc'),
+        `
+node-linker=hoisted
+package-import-method=copy
+hoist=false
+shamefully-hoist=true
+`,
+        'utf-8'
+      )
+    }
+
+    // Create the pnpm-workspace.yml file
+    let workspaceFile = 'packages:\n'
+    workspaceFile += '  - \'services/*\'\n'
+
+    await writeFile(resolve(destination, 'pnpm-workspace.yaml'), workspaceFile, 'utf-8')
+
+    console.time('pnpm install')
+    await execa('pnpm', ['install', '--no-frozen-lockfile'], { cwd: destination })
+    console.timeEnd('pnpm install')
+  } finally {
+    if (useVerdaccio) {
+      await stopVerdaccio(verdaccio)
+    }
+  }
+
+  return destination
 }

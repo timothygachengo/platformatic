@@ -1,11 +1,14 @@
 import { ITC } from '@platformatic/itc'
-import { createPinoWritable, errors } from '@platformatic/utils'
+import { setupNodeHTTPTelemetry } from '@platformatic/telemetry'
+import { createPinoWritable, ensureLoggableError } from '@platformatic/utils'
+import { collectMetrics } from '@platformatic/metrics'
 import { tracingChannel } from 'node:diagnostics_channel'
 import { once } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import { register } from 'node:module'
 import { platform, tmpdir } from 'node:os'
 import { basename, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { isMainThread } from 'node:worker_threads'
 import pino from 'pino'
 import { getGlobalDispatcher, setGlobalDispatcher } from 'undici'
@@ -79,17 +82,31 @@ export class ChildProcess extends ITC {
   #socket
   #child
   #logger
+  #metricsRegistry
   #pendingMessages
 
   constructor () {
-    super({ throwOnMissingHandler: false, name: `${process.env.PLT_MANAGER_ID}-child-process` })
+    super({
+      throwOnMissingHandler: false,
+      name: `${process.env.PLT_MANAGER_ID}-child-process`,
+      handlers: {
+        collectMetrics: (...args) => {
+          return this.#collectMetrics(...args)
+        },
+        getMetrics: (...args) => {
+          return this.#getMetrics(...args)
+        },
+      }
+    })
 
+    /* c8 ignore next */
     const protocol = platform() === 'win32' ? 'ws+unix:' : 'ws+unix://'
     this.#socket = new WebSocket(`${protocol}${getSocketPath(process.env.PLT_MANAGER_ID)}`)
     this.#pendingMessages = []
 
     this.listen()
     this.#setupLogger()
+    this.#setupTelemetry()
     this.#setupHandlers()
     this.#setupServer()
     this.#setupInterceptors()
@@ -106,6 +123,7 @@ export class ChildProcess extends ITC {
       // Never hang the process on this socket.
       this.#socket._socket.unref()
 
+      /* c8 ignore next 3 */
       for (const message of this.#pendingMessages) {
         this.#socket.send(message)
       }
@@ -115,11 +133,12 @@ export class ChildProcess extends ITC {
       try {
         this.#listener(JSON.parse(message))
       } catch (error) {
-        this.#logger.error({ err: errors.ensureLoggableError(error) }, 'Handling a message failed.')
+        this.#logger.error({ err: ensureLoggableError(error) }, 'Handling a message failed.')
         process.exit(exitCodes.PROCESS_MESSAGE_HANDLING_FAILED)
       }
     })
 
+    /* c8 ignore next 5 */
     this.#socket.on('error', error => {
       process._rawDebug(error)
       // There is nothing to log here as the connection with the parent thread is lost. Exit with a special code
@@ -128,6 +147,7 @@ export class ChildProcess extends ITC {
   }
 
   _send (message) {
+    /* c8 ignore next 4 */
     if (this.#socket.readyState === WebSocket.CONNECTING) {
       this.#pendingMessages.push(JSON.stringify(message))
       return
@@ -140,8 +160,25 @@ export class ChildProcess extends ITC {
     return once(this.#socket, 'close')
   }
 
+  /* c8 ignore next 3 */
   _close () {
     this.#socket.close()
+  }
+
+  async #collectMetrics ({ serviceId, metricsConfig }) {
+    const { registry } = await collectMetrics(serviceId, metricsConfig)
+    this.#metricsRegistry = registry
+  }
+
+  async #getMetrics ({ format } = {}) {
+    if (!this.#metricsRegistry) return null
+
+    const res = format === 'json'
+      ? await this.#metricsRegistry.getMetricsAsJSON()
+      : await this.#metricsRegistry.metrics()
+
+    if (format !== 'json') { process._rawDebug(res) }
+    return res
   }
 
   #setupLogger () {
@@ -158,30 +195,54 @@ export class ChildProcess extends ITC {
       })
 
       Reflect.defineProperty(process, 'stdout', { value: createPinoWritable(this.#logger, 'info') })
-      Reflect.defineProperty(process, 'stderr', { value: createPinoWritable(this.#logger, 'error') })
+      Reflect.defineProperty(process, 'stderr', { value: createPinoWritable(this.#logger, 'error', true) })
     } else {
       this.#logger = pino({ level: 'info', name: globalThis.platformatic.id })
+    }
+  }
+
+  /* c8 ignore next 5 */
+  #setupTelemetry () {
+    if (globalThis.platformatic.telemetry) {
+      setupNodeHTTPTelemetry(globalThis.platformatic.telemetry, this.#logger)
     }
   }
 
   #setupServer () {
     const subscribers = {
       asyncStart ({ options }) {
+        // Unix socket, do nothing
+        if (options.path) {
+          return
+        }
+
         const port = globalThis.platformatic.port
+        const host = globalThis.platformatic.host
 
         if (port !== false) {
           options.port = typeof port === 'number' ? port : 0
+        }
+        if (typeof host === 'string') {
+          options.host = host
         }
       },
       asyncEnd: ({ server }) => {
         tracingChannel('net.server.listen').unsubscribe(subscribers)
 
-        const { family, address, port } = server.address()
-        const url = new URL(family === 'IPv6' ? `http://[${address}]:${port}` : `http://${address}:${port}`).origin
+        const address = server.address()
+
+        // Unix socket, do nothing
+        if (typeof address === 'string') {
+          return
+        }
+
+        const { family, address: host, port } = address
+        /* c8 ignore next */
+        const url = new URL(family === 'IPv6' ? `http://[${host}]:${port}` : `http://${host}:${port}`).origin
 
         this.notify('url', url)
       },
-      error: error => {
+      error: ({ error }) => {
         tracingChannel('net.server.listen').unsubscribe(subscribers)
         this.notify('error', error)
       }
@@ -196,13 +257,13 @@ export class ChildProcess extends ITC {
 
   #setupHandlers () {
     function handleUnhandled (type, err) {
-      process._rawDebug(globalThis.platformatic.id, err)
       this.#logger.error(
-        { err: errors.ensureLoggableError(err) },
+        { err: ensureLoggableError(err) },
         `Child process for service ${globalThis.platformatic.id} threw an ${type}.`
       )
 
-      process.exit(exitCodes.PROCESS_UNHANDLED_ERROR)
+      // Give some time to the logger and ITC notifications to land before shutting down
+      setTimeout(() => process.exit(exitCodes.PROCESS_UNHANDLED_ERROR), 100)
     }
 
     process.on('uncaughtException', handleUnhandled.bind(this, 'uncaught exception'))
@@ -216,6 +277,10 @@ async function main () {
 
   globalThis.platformatic = data
 
+  if (data.root && isMainThread) {
+    process.chdir(fileURLToPath(data.root))
+  }
+
   if (loader) {
     register(loader, { data })
   }
@@ -227,6 +292,7 @@ async function main () {
   globalThis[Symbol.for('plt.children.itc')] = new ChildProcess()
 }
 
+/* c8 ignore next 3 */
 if (!isWindows || basename(process.argv.at(-1)) !== 'npm-prefix.js') {
   await main()
 }

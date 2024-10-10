@@ -17,6 +17,7 @@ import fastify from 'fastify'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { satisfies } from 'semver'
 import { packageJson, schema } from './lib/schema.js'
 
@@ -56,7 +57,7 @@ export class AstroStackable extends BaseStackable {
   }
 
   async stop () {
-    if (this.subprocess) {
+    if (this.childManager) {
       return this.stopCommand()
     }
 
@@ -112,29 +113,15 @@ export class AstroStackable extends BaseStackable {
   }
 
   getMeta () {
-    let composer = { prefix: this.servicePrefix, wantsAbsoluteUrls: true, needsRootRedirect: true }
+    const config = this.subprocessConfig ?? this.#app?.config
 
-    if (this.isProduction) {
-      composer = {
-        tcp: typeof this.url !== 'undefined',
-        url: this.url,
-        prefix: (this.subprocessConfig?.base ?? this.#basePath).replace(/(^\/)|(\/$)/g, ''),
-        wantsAbsoluteUrls: true,
-        needsRootRedirect: true
-      }
-    } else if (this.url) {
-      if (!this.#basePath) {
-        const config = this.subprocessConfig ?? this.#app.config
-        this.#basePath = config.base.replace(/(^\/)|(\/$)/g, '')
-      }
-
-      composer = {
-        tcp: true,
-        url: this.url,
-        prefix: this.#basePath.replace(/(^\/)|(\/$)/g, ''),
-        wantsAbsoluteUrls: true,
-        needsRootRedirect: true
-      }
+    const composer = {
+      tcp: typeof this.url !== 'undefined',
+      url: this.url,
+      prefix: this.basePath ?? config?.base ?? this.#basePath,
+      wantsAbsoluteUrls: true,
+      needsRootRedirect: true,
+      needsRefererBasedRedirect: !this.isProduction
     }
 
     return { composer }
@@ -167,6 +154,14 @@ export class AstroStackable extends BaseStackable {
       ? ensureTrailingSlash(cleanBasePath(config.application?.basePath))
       : undefined
 
+    this.registerGlobals({
+      id: this.id,
+      // Always use URL to avoid serialization problem in Windows
+      root: pathToFileURL(this.root).toString(),
+      basePath: this.#basePath,
+      logLevel: this.logger.level
+    })
+
     if (command) {
       return this.startWithCommand(command)
     }
@@ -181,7 +176,10 @@ export class AstroStackable extends BaseStackable {
     }
 
     // Require Astro
-    const serverPromise = createServerListener((this.isEntrypoint ? serverOptions?.port : undefined) ?? true)
+    const serverPromise = createServerListener(
+      (this.isEntrypoint ? serverOptions?.port : undefined) ?? true,
+      (this.isEntrypoint ? serverOptions?.hostname : undefined) ?? true
+    )
     const { dev } = await importFile(resolve(this.#astro, 'dist/core/index.js'))
 
     // Create the server and listen
@@ -225,6 +223,14 @@ export class AstroStackable extends BaseStackable {
     this.#basePath = config.application?.basePath
       ? ensureTrailingSlash(cleanBasePath(config.application?.basePath))
       : undefined
+
+    this.registerGlobals({
+      id: this.id,
+      // Always use URL to avoid serialization problem in Windows
+      root: pathToFileURL(this.root).toString(),
+      basePath: this.#basePath,
+      logLevel: this.logger.level
+    })
 
     if (command) {
       return this.startWithCommand(command)
@@ -296,7 +302,13 @@ function transformConfig () {
 export async function buildStackable (opts) {
   const root = opts.context.directory
 
-  const configManager = new ConfigManager({ schema, source: opts.config ?? {}, schemaOptions, transformConfig })
+  const configManager = new ConfigManager({
+    schema,
+    source: opts.config ?? {},
+    schemaOptions,
+    transformConfig,
+    dirname: root
+  })
   await configManager.parseAndValidate()
 
   return new AstroStackable(opts, root, configManager)

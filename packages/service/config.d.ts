@@ -6,6 +6,7 @@
  */
 
 export interface PlatformaticService {
+  basePath?: string;
   server?: {
     hostname?: string;
     port?: number | string;
@@ -31,7 +32,13 @@ export interface PlatformaticService {
     logger?:
       | boolean
       | {
-          level?: string;
+          level: (
+            | ("fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent")
+            | {
+                [k: string]: unknown;
+              }
+          ) &
+            string;
           transport?:
             | {
                 target?: string;

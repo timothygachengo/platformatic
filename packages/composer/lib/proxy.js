@@ -7,35 +7,31 @@ const fp = require('fastify-plugin')
 const kITC = Symbol.for('plt.runtime.itc')
 
 async function resolveServiceProxyParameters (service) {
-  let {
-    origin,
-    proxy: { prefix }
-  } = service
+  // Get meta information from the service, if any, to eventually hook up to a TCP port
+  const meta = (await globalThis[kITC]?.send('getServiceMeta', service.id))?.composer ?? { prefix: service.id }
+  const origin = meta.tcp ? meta.url : service.origin
 
-  if (prefix.endsWith('/')) {
-    prefix = prefix.slice(0, -1)
-  }
+  // If no prefix could be found, assume the service id
+  const prefix = (service.proxy?.prefix ?? meta.prefix ?? service.id).replace(/(\/$)/g, '')
 
   let rewritePrefix = ''
   let internalRewriteLocationHeader = true
 
-  // Get meta information from the service, if any, to eventually hook up to a TCP port
-  const meta = (await globalThis[kITC]?.send('getServiceMeta', service.id))?.composer ?? {}
-
-  if (meta.tcp) {
-    origin = meta.url
-  }
-
-  if (meta.prefix) {
-    prefix = meta.prefix
-  }
-
   if (meta.wantsAbsoluteUrls) {
-    rewritePrefix = prefix
+    // The rewritePrefix purposely ignores service.proxy?.prefix to let
+    // the service always being able to configure their value
+    rewritePrefix = meta.prefix ?? service.id
     internalRewriteLocationHeader = false
   }
 
-  return { origin, prefix, rewritePrefix, internalRewriteLocationHeader, needsRootRedirect: meta.needsRootRedirect }
+  return {
+    origin,
+    prefix,
+    rewritePrefix,
+    internalRewriteLocationHeader,
+    needsRootRedirect: meta.needsRootRedirect,
+    needsRefererBasedRedirect: meta.needsRefererBasedRedirect
+  }
 }
 
 module.exports = fp(async function (app, opts) {
@@ -44,16 +40,21 @@ module.exports = fp(async function (app, opts) {
   for (const service of opts.services) {
     if (!service.proxy) {
       // When a service defines no expose config at all
-      // we assume a proxy exposed with a prefix equals to its id
-      if (service.proxy !== false && !service.openapi && !service.graphql) {
-        service.proxy = { prefix: service.id }
-      } else {
+      // we assume a proxy exposed with a prefix equals to its id or meta.prefix
+      if (service.proxy === false || service.openapi || service.graphql) {
         continue
       }
     }
 
     const parameters = await resolveServiceProxyParameters(service)
-    const { prefix, origin, rewritePrefix, internalRewriteLocationHeader, needsRootRedirect } = parameters
+    const {
+      prefix,
+      origin,
+      rewritePrefix,
+      internalRewriteLocationHeader,
+      needsRootRedirect,
+      needsRefererBasedRedirect
+    } = parameters
     meta.proxies[service.id] = parameters
 
     const basePath = `/${prefix ?? ''}`.replaceAll(/\/+/g, '/').replace(/\/$/, '')
@@ -62,10 +63,30 @@ module.exports = fp(async function (app, opts) {
     if (needsRootRedirect) {
       app.addHook('preHandler', (req, reply, done) => {
         if (req.url === basePath) {
-          reply.redirect(`${req.url}/`, 308)
-        }
+          app.inject(
+            {
+              method: req.method,
+              url: `${basePath}/`,
+              headers: req.headers,
+              payload: req.body
+            },
+            (err, result) => {
+              if (err) {
+                done(err)
+                return
+              }
 
-        done()
+              const replyHeaders = result.headers
+              delete replyHeaders['content-length']
+              delete replyHeaders['transfer-encoding']
+
+              reply.code(result.statusCode).headers(replyHeaders).send(result.rawPayload)
+              done()
+            }
+          )
+        } else {
+          done()
+        }
       })
     }
 
@@ -75,30 +96,32 @@ module.exports = fp(async function (app, opts) {
       In that case we try to properly redirect the browser by trying to understand the prefix
       from the Referer header.
     */
-    app.addHook('preHandler', (req, reply, done) => {
-      // If the URL is already targeted to the service, do nothing
-      if (req.url.startsWith(basePath)) {
+    if (needsRefererBasedRedirect) {
+      app.addHook('preHandler', (req, reply, done) => {
+        // If the URL is already targeted to the service, do nothing
+        if (req.url.startsWith(basePath)) {
+          done()
+          return
+        }
+
+        // Use the referer to understand the desired intent
+        const referer = req.headers.referer
+
+        if (!referer) {
+          done()
+          return
+        }
+
+        const path = new URL(referer).pathname
+
+        // If we have a match redirect
+        if (path.startsWith(basePath)) {
+          reply.redirect(`${basePath}${req.url}`, 308)
+        }
+
         done()
-        return
-      }
-
-      // Use the referer to understand the desired intent
-      const referer = req.headers.referer
-
-      if (!referer) {
-        done()
-        return
-      }
-
-      const path = new URL(referer).pathname
-
-      // If we have a match redirect
-      if (path.startsWith(basePath)) {
-        reply.redirect(`${basePath}${req.url}`, 308)
-      }
-
-      done()
-    })
+      })
+    }
 
     // Do not show proxied services in Swagger
     if (!service.openapi) {
@@ -138,7 +161,7 @@ module.exports = fp(async function (app, opts) {
             ...headers,
             ...telemetryHeaders,
             'x-forwarded-for': request.ip,
-            'x-forwarded-host': request.host,
+            'x-forwarded-host': request.host
           }
 
           return headers
@@ -146,8 +169,8 @@ module.exports = fp(async function (app, opts) {
         onResponse: (request, reply, res) => {
           app.openTelemetry?.endHTTPSpanClient(reply.request.proxedCallSpan, { statusCode: reply.statusCode })
           reply.send(res.stream)
-        },
-      },
+        }
+      }
     })
   }
 

@@ -1,6 +1,6 @@
 'use strict'
 
-const { basename, join, resolve, dirname, parse } = require('node:path')
+const { basename, join, resolve, dirname, parse, isAbsolute } = require('node:path')
 const { readFile, access } = require('node:fs/promises')
 const EventEmitter = require('node:events')
 const { createRequire } = require('node:module')
@@ -64,7 +64,7 @@ class ConfigManager extends EventEmitter {
     return async (app, opts) => {
       return fastifyPlugin(app, {
         ...opts,
-        configManager: this,
+        configManager: this
       })
     }
   }
@@ -77,7 +77,7 @@ class ConfigManager extends EventEmitter {
 
     if (opts.ignore !== undefined) {
       for (const path of opts.ignore) {
-        jsonPath.apply(config, path, (value) => {
+        jsonPath.apply(config, path, value => {
           value[skipReplaceEnv] = true
           return value
         })
@@ -85,7 +85,7 @@ class ConfigManager extends EventEmitter {
     }
 
     const escapeJSON = opts.escapeJSON ?? true
-    const env = opts.env ?? await this.#loadEnv()
+    const env = opts.env ?? (await this.#loadEnv())
 
     if (typeof config === 'object' && config !== null) {
       if (config[skipReplaceEnv]) {
@@ -95,16 +95,13 @@ class ConfigManager extends EventEmitter {
 
       for (const key of Object.keys(config)) {
         const value = config[key]
-        config[key] = await this.replaceEnv(
-          value,
-          {
-            env,
-            context: opts.context,
-            escapeJSON: false,
-            parent: config,
-            tree: [...opts.tree ?? [], config],
-          }
-        )
+        config[key] = await this.replaceEnv(value, {
+          env,
+          context: opts.context,
+          escapeJSON: false,
+          parent: config,
+          tree: [...(opts.tree ?? []), config]
+        })
       }
       return config
     }
@@ -112,6 +109,14 @@ class ConfigManager extends EventEmitter {
     const replaceEnv = ({ key, value }) => {
       if (!value && this._onMissingEnv) {
         value = this._onMissingEnv(key, opts)
+      }
+
+      /*
+        When the value is undefined, which means that the key was missing,
+        just replace with an empty string. The JSON schema will eventually throw an error.
+      */
+      if (typeof value === 'undefined') {
+        value = ''
       }
 
       // TODO this should handle all the escapes chars
@@ -133,7 +138,7 @@ class ConfigManager extends EventEmitter {
 
   _transformConfig () {}
 
-  async parse (replaceEnv = true) {
+  async parse (replaceEnv = true, args = [], opts = {}) {
     try {
       if (this.fullPath) {
         const configString = await this.load()
@@ -143,11 +148,17 @@ class ConfigManager extends EventEmitter {
           config = await this.replaceEnv(config, {
             escapeJSON: false,
             ignore: this._replaceEnvIgnore,
-            context: this.context,
+            context: this.context
           })
         }
 
         this.current = config
+      } else if (replaceEnv) {
+        this.current = await this.replaceEnv(this.current, {
+          escapeJSON: false,
+          ignore: this._replaceEnvIgnore,
+          context: this.context
+        })
       }
 
       if (this._stackableUpgrade) {
@@ -200,17 +211,18 @@ class ConfigManager extends EventEmitter {
         }
       }
 
-      const validationResult = this.validate()
-      if (!validationResult) {
-        return false
+      if (opts.validation !== false) {
+        const validationResult = this.validate()
+        if (!validationResult) {
+          return false
+        }
       }
 
-      await this._transformConfig()
+      if (opts.tranform !== false) {
+        await this._transformConfig(args)
+      }
       return true
     } catch (err) {
-      if (err.name === 'MissingValueError') {
-        throw new errors.EnvVarMissingError(err.key)
-      }
       const newerr = new errors.CannotParseConfigFileError(err.message)
       newerr.cause = err
       throw newerr
@@ -238,7 +250,7 @@ class ConfigManager extends EventEmitter {
           data.parentData[data.parentDataProperty] = resolved
         }
         return true
-      },
+      }
     })
     ajv.addKeyword({
       keyword: 'resolveModule',
@@ -262,17 +274,19 @@ class ConfigManager extends EventEmitter {
         } catch {
           return false
         }
-      },
+      }
     })
 
     ajv.addKeyword({
       keyword: 'typeof',
       validate: function validate (schema, value, _, data) {
         // eslint-disable-next-line valid-typeof
-        if (typeof value === schema) { return true }
+        if (typeof value === schema) {
+          return true
+        }
         validate.errors = [{ message: `"${data.parentDataProperty}" shoud be a ${schema}.`, params: data.parentData }]
         return false
-      },
+      }
     })
 
     const ajvValidate = ajv.compile(this.schema)
@@ -280,10 +294,10 @@ class ConfigManager extends EventEmitter {
     const res = ajvValidate(this.current)
     /* c8 ignore next 12 */
     if (!res) {
-      this.validationErrors = ajvValidate.errors.map((err) => {
+      this.validationErrors = ajvValidate.errors.map(err => {
         return {
           path: err.instancePath === '' ? '/' : err.instancePath,
-          message: err.message + ' ' + JSON.stringify(err.params),
+          message: err.message + ' ' + JSON.stringify(err.params)
         }
       })
       return false
@@ -295,9 +309,13 @@ class ConfigManager extends EventEmitter {
   async parseAndValidate (replaceEnv = true) {
     const validationResult = await this.parse(replaceEnv)
     if (!validationResult) {
-      throw new errors.ValidationErrors(this.validationErrors.map((err) => {
-        return err.message
-      }).join('\n'))
+      throw new errors.ValidationErrors(
+        this.validationErrors
+          .map(err => {
+            return err.message
+          })
+          .join('\n')
+      )
     }
   }
 
@@ -334,32 +352,48 @@ class ConfigManager extends EventEmitter {
         'platformatic.yml',
         'platformatic.toml',
         'platformatic.tml',
+        'watt.json',
+        'watt.json5',
+        'watt.yaml',
+        'watt.yml',
+        'watt.toml',
+        'watt.tml'
       ]
     } else {
       // A config type was not provided. Search for all known types and
       // formats. Unfortunately, this means the ConfigManager needs to be
       // aware of the different application types (but that should be small).
-      return [...new Set([
-        ...this.listConfigFiles('service'),
-        ...this.listConfigFiles('db'),
-        ...this.listConfigFiles('composer'),
-        ...this.listConfigFiles('runtime'),
-      ])]
+      return [
+        ...new Set([
+          ...this.listConfigFiles('service'),
+          ...this.listConfigFiles('db'),
+          ...this.listConfigFiles('composer'),
+          ...this.listConfigFiles('runtime')
+        ])
+      ]
     }
   }
 
-  static async findConfigFile (directory, type) {
+  static async findConfigFile (directory, typeOrCandidates) {
     directory ??= process.cwd()
-    const configFileNames = this.listConfigFiles(type)
-    const configFilesAccessibility = await Promise.all(configFileNames.map((fileName) => isFileAccessible(fileName, directory)))
+    const configFileNames = Array.isArray(typeOrCandidates) ? typeOrCandidates : this.listConfigFiles(typeOrCandidates)
+    const configFilesAccessibility = await Promise.all(
+      configFileNames.map(fileName => isFileAccessible(fileName, directory))
+    )
     const accessibleConfigFilename = configFileNames.find((value, index) => configFilesAccessibility[index])
     return accessibleConfigFilename
   }
 
   async #loadEnv () {
     let dotEnvPath
-    let currentPath = this.fullPath
-    const rootPath = parse(this.fullPath).root
+    let currentPath = this.fullPath ?? this.dirname
+
+    if (!isAbsolute(currentPath)) {
+      currentPath = resolve(process.cwd(), currentPath)
+    }
+
+    const rootPath = parse(currentPath).root
+
     while (currentPath !== rootPath) {
       try {
         const candidatePath = join(currentPath, '.env')
@@ -392,7 +426,7 @@ class ConfigManager extends EventEmitter {
     return {
       ...process.env,
       ...this.env,
-      [PLT_ROOT]: join(this.fullPath, '..'),
+      [PLT_ROOT]: this.fullPath ? join(this.fullPath, '..') : this.dirname
     }
   }
 }

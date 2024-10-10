@@ -3,9 +3,11 @@
 const { dirname } = require('node:path')
 const { printSchema } = require('graphql')
 const pino = require('pino')
+const { collectMetrics } = require('@platformatic/metrics')
 const httpMetrics = require('@platformatic/fastify-http-metrics')
 const { extractTypeScriptCompileOptionsFromConfig } = require('./compile')
 const { compile } = require('@platformatic/ts-compiler')
+const { deepmerge } = require('@platformatic/utils')
 
 class ServiceStackable {
   constructor (options) {
@@ -27,6 +29,13 @@ class ServiceStackable {
     })
 
     this.#updateConfig()
+
+    // Setup globals
+    this.registerGlobals({
+      setOpenapiSchema: this.setOpenapiSchema.bind(this),
+      setGraphqlSchema: this.setGraphqlSchema.bind(this),
+      setBasePath: this.setBasePath.bind(this)
+    })
   }
 
   async init () {
@@ -34,10 +43,7 @@ class ServiceStackable {
 
     if (this.app === null) {
       this.app = await this._init()
-
-      if (this.metricsRegistry) {
-        this.#setHttpMetrics()
-      }
+      await this.#collectMetrics()
     }
     return this.app
   }
@@ -64,9 +70,9 @@ class ServiceStackable {
     const compileOptions = {
       ...typeScriptCompileOptions,
       cwd,
-      logger: this.configManager.current.server.logger,
+      logger: this.logger
     }
-    if (!await compile(compileOptions)) {
+    if (!(await compile(compileOptions))) {
       throw new Error(`Failed to compile ${cwd}`)
     }
   }
@@ -99,6 +105,22 @@ class ServiceStackable {
     return config
   }
 
+  async getEnv () {
+    return this.configManager.env
+  }
+
+  getMeta () {
+    const config = this.configManager.current
+
+    return {
+      composer: {
+        prefix: config.basePath ?? this.basePath ?? this.context?.serviceId,
+        wantsAbsoluteUrls: false,
+        needsRootRedirect: false
+      }
+    }
+  }
+
   async getWatchConfig () {
     const config = this.configManager.current
 
@@ -129,13 +151,30 @@ class ServiceStackable {
     return this.app.graphql ? printSchema(this.app.graphql.schema) : null
   }
 
-  async collectMetrics ({ registry }) {
-    this.metricsRegistry = registry
-
-    return {
-      defaultMetrics: true,
-      httpMetrics: false
+  // This method is not a part of Stackable interface because we need to register
+  // fastify metrics before the server is started.
+  async #collectMetrics () {
+    const metricsConfig = this.context.metricsConfig
+    if (metricsConfig !== false) {
+      const { registry } = await collectMetrics(
+        this.context.serviceId,
+        {
+          defaultMetrics: true,
+          httpMetrics: false,
+          ...metricsConfig
+        }
+      )
+      this.metricsRegistry = registry
+      this.#setHttpMetrics()
     }
+  }
+
+  async getMetrics ({ format }) {
+    if (!this.metricsRegistry) return null
+
+    return format === 'json'
+      ? await this.metricsRegistry.getMetricsAsJSON()
+      : await this.metricsRegistry.metrics()
   }
 
   async inject (injectParams) {
@@ -159,6 +198,22 @@ class ServiceStackable {
   async updateContext (context) {
     this.context = { ...this.context, ...context }
     this.#updateConfig()
+  }
+
+  setOpenapiSchema (schema) {
+    this.openapiSchema = schema
+  }
+
+  setGraphqlSchema (schema) {
+    this.graphqlSchema = schema
+  }
+
+  setBasePath (basePath) {
+    this.basePath = basePath
+  }
+
+  registerGlobals (globals) {
+    globalThis.platformatic = Object.assign(globalThis.platformatic ?? {}, globals)
   }
 
   #setHttpMetrics () {
@@ -210,7 +265,7 @@ class ServiceStackable {
       config.metrics = metricsConfig
     }
     if (serverConfig) {
-      config.server = serverConfig
+      config.server = deepmerge(config.server ?? {}, serverConfig ?? {})
     }
 
     if ((hasManagementApi && config.metrics === undefined) || config.metrics) {
@@ -239,20 +294,27 @@ class ServiceStackable {
   }
 
   #initLogger () {
-    this.configManager.current.server = this.configManager.current.server || {}
-    const level = this.configManager.current.server.logger?.level
+    if (this.configManager.current.server?.loggerInstance) {
+      this.logger = this.configManager.current.server?.loggerInstance
+      return
+    }
+
+    this.configManager.current.server ??= {}
+    this.loggerConfig = deepmerge(this.context.loggerConfig ?? {}, this.configManager.current.server?.logger ?? {})
 
     const pinoOptions = {
-      level: level ?? 'trace'
+      level: this.loggerConfig?.level ?? 'trace'
     }
 
     if (this.context?.serviceId) {
       pinoOptions.name = this.context.serviceId
     }
 
+    this.logger = pino(pinoOptions)
+
     // Only one of logger and loggerInstance should be set
     delete this.configManager.current.server.logger
-    this.configManager.current.server.loggerInstance = pino(pinoOptions)
+    this.configManager.current.server.loggerInstance = this.logger
   }
 }
 

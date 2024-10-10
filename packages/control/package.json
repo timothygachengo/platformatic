@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/control",
-  "version": "2.0.0-alpha.9",
+  "version": "2.5.5-alpha.1",
   "description": "Platformatic Control",
   "main": "index.js",
   "bin": {
@@ -11,7 +11,7 @@
     "unit": "borp --concurrency=1 --timeout=180000",
     "lint": "eslint"
   },
-  "author": "Matteo Collina <hello@matteocollina.com>",
+  "author": "Platformatic Inc. <oss@platformatic.dev> (https://platformatic.dev)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/platformatic/platformatic.git"
@@ -38,7 +38,7 @@
     "@platformatic/utils": "workspace:*",
     "commist": "^3.2.0",
     "help-me": "^5.0.0",
-    "pino": "^8.19.0",
+    "pino": "^9.0.0",
     "pino-pretty": "^11.0.0",
     "table": "^6.8.1",
     "undici": "^6.9.0",

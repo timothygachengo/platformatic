@@ -1,6 +1,6 @@
 {
   "name": "@platformatic/utils",
-  "version": "2.0.0-alpha.9",
+  "version": "2.5.5-alpha.1",
   "description": "Platformatic Utils",
   "main": "index.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "type": "git",
     "url": "git+https://github.com/platformatic/platformatic.git"
   },
-  "author": "Ivan Tymoshenko <ivan@tymoshenko.me>",
+  "author": "Platformatic Inc. <oss@platformatic.dev> (https://platformatic.dev)",
   "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/platformatic/platformatic/issues"
@@ -21,7 +21,7 @@
     "@matteo.collina/tspl": "^0.1.1",
     "borp": "^0.17.0",
     "eslint": "9",
-    "fastify": "5.0.0-alpha.4",
+    "fastify": "^5.0.0",
     "neostandard": "^0.11.1",
     "typescript": "^5.5.4"
   },
@@ -31,6 +31,7 @@
     "@watchable/unpromise": "^1.0.2",
     "leven": "~3.1.0",
     "minimatch": "^8.0.4",
+    "semver": "^7.6.3",
     "undici": "^6.9.0"
   }
 }

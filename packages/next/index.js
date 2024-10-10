@@ -24,7 +24,6 @@ const supportedVersions = '^14.0.0'
 export class NextStackable extends BaseStackable {
   #basePath
   #next
-  #manager
   #child
   #server
 
@@ -73,7 +72,7 @@ export class NextStackable extends BaseStackable {
       })
     } else {
       const exitPromise = once(this.#child, 'exit')
-      await this.#manager.close()
+      await this.childManager.close()
       process.kill(this.#child.pid, 'SIGKILL')
       await exitPromise
     }
@@ -102,16 +101,11 @@ export class NextStackable extends BaseStackable {
   }
 
   getMeta () {
-    let composer = { prefix: this.servicePrefix, wantsAbsoluteUrls: true, needsRootRedirect: false }
+    const composer = { prefix: this.basePath ?? this.#basePath, wantsAbsoluteUrls: true, needsRootRedirect: false }
 
     if (this.url) {
-      composer = {
-        tcp: true,
-        url: this.url,
-        prefix: this.#basePath ?? this.servicePrefix,
-        wantsAbsoluteUrls: true,
-        needsRootRedirect: false
-      }
+      composer.tcp = true
+      composer.url = this.url
     }
 
     return { composer }
@@ -134,36 +128,39 @@ export class NextStackable extends BaseStackable {
       port: port || 0
     }
 
-    this.#manager = new ChildManager({
+    this.childManager = new ChildManager({
       loader: loaderUrl,
       context: {
         id: this.id,
         // Always use URL to avoid serialization problem in Windows
         root: pathToFileURL(this.root).toString(),
         basePath: this.#basePath,
-        logLevel: this.logger.level
+        logLevel: this.logger.level,
+        port: false
       }
     })
 
-    const promise = once(this.#manager, 'url')
+    const promise = once(this.childManager, 'url')
     await this.#startDevelopmentNext(serverOptions)
-    this.url = (await promise)[0]
+    const [url, clientWs] = await promise
+    this.url = url
+    this.clientWs = clientWs
   }
 
   async #startDevelopmentNext (serverOptions) {
     const { nextDev } = await importFile(pathResolve(this.#next, './dist/cli/next-dev.js'))
 
-    this.#manager.on('config', config => {
-      this.#basePath = config.basePath.replace(/(^\/)|(\/$)/g, '')
+    this.childManager.on('config', config => {
+      this.#basePath = config.basePath
     })
 
     try {
-      await this.#manager.inject()
+      await this.childManager.inject()
       const childPromise = createChildProcessListener()
       await nextDev(serverOptions, 'default', this.root)
       this.#child = await childPromise
     } finally {
-      await this.#manager.eject()
+      await this.childManager.eject()
     }
   }
 
@@ -178,7 +175,7 @@ export class NextStackable extends BaseStackable {
       return this.startWithCommand(command, loaderUrl)
     }
 
-    this.#manager = new ChildManager({
+    this.childManager = new ChildManager({
       loader: loaderUrl,
       context: {
         id: this.id,
@@ -195,7 +192,7 @@ export class NextStackable extends BaseStackable {
 
   async #startProductionNext () {
     try {
-      await this.#manager.inject()
+      await this.childManager.inject()
       const { nextStart } = await importFile(pathResolve(this.#next, './dist/cli/next-start.js'))
 
       const { hostname, port } = this.serverConfig ?? {}
@@ -206,18 +203,21 @@ export class NextStackable extends BaseStackable {
 
       // Since we are in the same process
       process.once('plt:next:config', config => {
-        this.#basePath = config.basePath.replace(/(^\/)|(\/$)/g, '')
+        this.#basePath = config.basePath
       })
 
-      this.#manager.register()
-      const serverPromise = createServerListener((this.isEntrypoint ? serverOptions?.port : undefined) ?? true)
+      this.childManager.register()
+      const serverPromise = createServerListener(
+        (this.isEntrypoint ? serverOptions?.port : undefined) ?? true,
+        (this.isEntrypoint ? serverOptions?.hostname : undefined) ?? true
+      )
 
       await nextStart(serverOptions, this.root)
 
       this.#server = await serverPromise
       this.url = getServerUrl(this.#server)
     } finally {
-      await this.#manager.eject()
+      await this.childManager.eject()
     }
   }
 }
@@ -238,7 +238,13 @@ function transformConfig () {
 export async function buildStackable (opts) {
   const root = opts.context.directory
 
-  const configManager = new ConfigManager({ schema, source: opts.config ?? {}, schemaOptions, transformConfig })
+  const configManager = new ConfigManager({
+    schema,
+    source: opts.config ?? {},
+    schemaOptions,
+    transformConfig,
+    dirname: root
+  })
   await configManager.parseAndValidate()
 
   return new NextStackable(opts, root, configManager)

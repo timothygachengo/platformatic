@@ -57,7 +57,7 @@ export class ViteStackable extends BaseStackable {
   }
 
   async stop () {
-    if (this.subprocess) {
+    if (this.childManager) {
       return this.stopCommand()
     }
 
@@ -125,29 +125,14 @@ export class ViteStackable extends BaseStackable {
   }
 
   getMeta () {
-    let composer = { prefix: this.servicePrefix, wantsAbsoluteUrls: true, needsRootRedirect: true }
+    const config = this.subprocessConfig ?? this.#app?.config
 
-    if (this.isProduction) {
-      composer = {
-        tcp: typeof this.url !== 'undefined',
-        url: this.url,
-        prefix: (this.subprocessConfig?.base ?? this.#basePath).replace(/(^\/)|(\/$)/g, ''),
-        wantsAbsoluteUrls: true,
-        needsRootRedirect: true
-      }
-    } else if (this.url) {
-      if (!this.#basePath) {
-        const config = this.subprocessConfig ?? this.#app.config
-        this.#basePath = config.base.replace(/(^\/)|(\/$)/g, '')
-      }
-
-      composer = {
-        tcp: true,
-        url: this.url,
-        prefix: this.#basePath.replace(/(^\/)|(\/$)/g, ''),
-        wantsAbsoluteUrls: true,
-        needsRootRedirect: true
-      }
+    const composer = {
+      tcp: typeof this.url !== 'undefined',
+      url: this.url,
+      prefix: this.basePath ?? config?.base ?? this.#basePath,
+      wantsAbsoluteUrls: true,
+      needsRootRedirect: true
     }
 
     return { composer }
@@ -164,6 +149,14 @@ export class ViteStackable extends BaseStackable {
     this.#basePath = config.application?.basePath
       ? ensureTrailingSlash(cleanBasePath(config.application?.basePath))
       : undefined
+
+    this.registerGlobals({
+      id: this.id,
+      // Always use URL to avoid serialization problem in Windows
+      root: pathToFileURL(this.root).toString(),
+      basePath: this.#basePath,
+      logLevel: this.logger.level
+    })
 
     if (command) {
       return this.startWithCommand(command)
@@ -187,7 +180,10 @@ export class ViteStackable extends BaseStackable {
     }
 
     // Require Vite
-    const serverPromise = createServerListener((this.isEntrypoint ? serverOptions?.port : undefined) ?? true)
+    const serverPromise = createServerListener(
+      (this.isEntrypoint ? serverOptions?.port : undefined) ?? true,
+      (this.isEntrypoint ? serverOptions?.hostname : undefined) ?? true
+    )
     const { createServer } = await importFile(resolve(this.#vite, 'dist/node/index.js'))
 
     // Create the server and listen
@@ -215,6 +211,13 @@ export class ViteStackable extends BaseStackable {
       ? ensureTrailingSlash(cleanBasePath(config.application?.basePath))
       : undefined
 
+    this.registerGlobals({
+      id: this.id,
+      // Always use URL to avoid serialization problem in Windows
+      root: pathToFileURL(this.root).toString(),
+      basePath: this.#basePath,
+      logLevel: this.logger.level
+    })
     if (command) {
       return this.startWithCommand(command)
     }
@@ -261,6 +264,10 @@ export class ViteSSRStackable extends NodeStackable {
     this.type = 'vite'
   }
 
+  _getWantsAbsoluteUrls () {
+    return true
+  }
+
   async init () {
     const config = this.configManager.current
 
@@ -293,9 +300,19 @@ export class ViteSSRStackable extends NodeStackable {
 
     if (this.isProduction) {
       const clientDirectory = config.vite.ssr.clientDirectory
-      this.verifyOutputDirectory(
-        resolve(this.root, clientDirectory, config.application.outputDirectory, clientDirectory)
-      )
+      const clientOutDir = resolve(this.root, clientDirectory, config.application.outputDirectory, clientDirectory)
+
+      this.verifyOutputDirectory(clientOutDir)
+
+      const buildInfoPath = resolve(clientOutDir, '.platformatic-build.json')
+      if (!this.#basePath && existsSync(buildInfoPath)) {
+        try {
+          const buildInfo = JSON.parse(await readFile(buildInfoPath, 'utf-8'))
+          this.#basePath = buildInfo.basePath
+        } catch (e) {
+          console.log(e)
+        }
+      }
     }
 
     await super.start({ listen })
@@ -361,22 +378,16 @@ export class ViteSSRStackable extends NodeStackable {
   }
 
   getMeta () {
-    let composer = { prefix: this.servicePrefix, wantsAbsoluteUrls: true, needsRootRedirect: true }
+    const vite = this._getApplication()?.vite
+    const config = vite?.devServer?.config ?? vite?.config.vite
+    const applicationBasePath = config?.base
 
-    if (this.url) {
-      if (!this.#basePath) {
-        const application = this._getApplication()
-        const config = application.vite.devServer?.config ?? application.vite.config.vite
-        this.#basePath = (config.base ?? '').replace(/(^\/)|(\/$)/g, '')
-      }
-
-      composer = {
-        tcp: true,
-        url: this.url,
-        prefix: this.#basePath ?? this.servicePrefix,
-        wantsAbsoluteUrls: true,
-        needsRootRedirect: true
-      }
+    const composer = {
+      tcp: typeof this.url !== 'undefined',
+      url: this.url,
+      prefix: this.basePath ?? applicationBasePath ?? this.#basePath,
+      wantsAbsoluteUrls: true,
+      needsRootRedirect: true
     }
 
     return { composer }
@@ -413,7 +424,13 @@ export function transformConfig () {
 export async function buildStackable (opts) {
   const root = opts.context.directory
 
-  const configManager = new ConfigManager({ schema, source: opts.config ?? {}, schemaOptions, transformConfig })
+  const configManager = new ConfigManager({
+    schema,
+    source: opts.config ?? {},
+    schemaOptions,
+    transformConfig,
+    dirname: root
+  })
   await configManager.parseAndValidate()
 
   // When in SSR mode, we use ViteSSRStackable, which is a subclass of @platformatic/node

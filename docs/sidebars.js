@@ -65,6 +65,15 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Watt',
+      collapsed: true,
+      items: [
+        'watt/overview',
+        'watt/reference',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Platformatic Service',
       collapsed: true,
       items: [
@@ -89,6 +98,42 @@ const sidebars = {
       label: 'Packages',
       collapsed: true,
       items: [
+        {
+          type: 'category',
+          label: 'Astro',
+          collapsed: true,
+          items: [
+            'packages/astro/overview',
+            'packages/astro/configuration',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Next',
+          collapsed: true,
+          items: [
+            'packages/next/overview',
+            'packages/next/configuration',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Remix',
+          collapsed: true,
+          items: [
+            'packages/remix/overview',
+            'packages/remix/configuration',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Vite',
+          collapsed: true,
+          items: [
+            'packages/vite/overview',
+            'packages/vite/configuration',
+          ],
+        },
         {
           type: 'category',
           label: 'SQL-to-OpenAPI',
@@ -152,6 +197,7 @@ const sidebars = {
   Learn: [
     'learn/overview',
     'getting-started/quick-start-guide',
+    'getting-started/quick-start-watt',
     {
       type: 'category',
       label: 'Beginner Tutorials',
@@ -197,7 +243,6 @@ const sidebars = {
         'guides/generate-frontend-code-to-consume-platformatic-rest-api',
         'guides/migrating-fastify-app-to-platformatic-service',
         "guides/migrating-express-app-to-platformatic-service",
-        'guides/applications-with-stackables',
         'guides/telemetry',
         'guides/dockerize-platformatic-app',
         'guides/build-modular-monolith',

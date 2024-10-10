@@ -12,6 +12,12 @@ const abstractLogger = require('./logger')
 
 const pltVersion = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8')).version
 
+const knownSchemas = [
+  [/^https:\/\/platformatic.dev\/schemas\/(.*)\/(.*)/, match => match[2]],
+  [/^https:\/\/schemas.platformatic.dev\/@platformatic\/(.*)\/(.*)\.json/, match => match[1]],
+  [/^https:\/\/schemas.platformatic.dev\/wattpm\/(.*)\.json/, () => 'runtime']
+]
+
 // Keys are default types, values are the suffix for the default configuration file
 const defaultTypesWithAliases = {
   service: 'service',
@@ -23,6 +29,20 @@ const defaultTypesWithAliases = {
   next: 'application',
   astro: 'application',
   remix: 'application'
+}
+
+function matchKnownSchema (url) {
+  if (!url) {
+    return
+  }
+
+  for (const [pattern, extract] of knownSchemas) {
+    const match = url.match(pattern)
+
+    if (match) {
+      return extract(match)
+    }
+  }
 }
 
 class Store {
@@ -68,13 +88,7 @@ class Store {
     const { module: extendedModule, version } = splitModuleFromVersion(_extends || module)
     let app = this.#map.get($schema)
 
-    let match = $schema?.match(/\/schemas\/(.*)\/(.*)/)
-    let type = match?.[2]
-    if (!match) {
-      match = $schema?.match(/\/@platformatic\/(.*)\/(.*)\.json/)
-      type = match?.[1]
-    }
-
+    let type = matchKnownSchema($schema)
     const require = this.#createRequire(type, directory)
 
     // Legacy Platformatic apps
@@ -188,7 +202,13 @@ class Store {
         'platformatic.yaml',
         'platformatic.yml',
         'platformatic.toml',
-        'platformatic.tml'
+        'platformatic.tml',
+        'watt.json',
+        'watt.json5',
+        'watt.yaml',
+        'watt.yml',
+        'watt.toml',
+        'watt.tml'
       ]
     })
 
@@ -317,3 +337,4 @@ async function loadModule (require, extendedModule) {
 }
 
 module.exports.Store = Store
+module.exports.matchKnownSchema = matchKnownSchema

@@ -6,6 +6,7 @@
  */
 
 export interface PlatformaticComposer {
+  basePath?: string;
   server?: {
     hostname?: string;
     port?: number | string;
@@ -31,7 +32,13 @@ export interface PlatformaticComposer {
     logger?:
       | boolean
       | {
-          level?: string;
+          level: (
+            | ("fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent")
+            | {
+                [k: string]: unknown;
+              }
+          ) &
+            string;
           transport?:
             | {
                 target?: string;
@@ -142,7 +149,7 @@ export interface PlatformaticComposer {
     };
   };
   composer: {
-    services: {
+    services?: {
       id: string;
       origin?: string;
       openapi?: {
@@ -224,7 +231,7 @@ export interface PlatformaticComposer {
       proxy?:
         | false
         | {
-            prefix: string;
+            prefix?: string;
           };
     }[];
     openapi?: {

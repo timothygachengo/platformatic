@@ -23,6 +23,7 @@ export type CrudOperationAuth =
   | boolean;
 
 export interface PlatformaticDB {
+  basePath?: string;
   server?: {
     hostname?: string;
     port?: number | string;
@@ -48,7 +49,13 @@ export interface PlatformaticDB {
     logger?:
       | boolean
       | {
-          level?: string;
+          level: (
+            | ("fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent")
+            | {
+                [k: string]: unknown;
+              }
+          ) &
+            string;
           transport?:
             | {
                 target?: string;

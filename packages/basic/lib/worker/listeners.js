@@ -1,19 +1,28 @@
 import { withResolvers } from '@platformatic/utils'
 import { subscribe, tracingChannel, unsubscribe } from 'node:diagnostics_channel'
 
-export function createServerListener (overridePort = true) {
+export function createServerListener (overridePort = true, overrideHost) {
   const { promise, resolve, reject } = withResolvers()
 
   const subscribers = {
     asyncStart ({ options }) {
+      // Unix socket, do nothing
+      if (options.path) {
+        return
+      }
+
       if (overridePort !== false) {
         options.port = typeof overridePort === 'number' ? overridePort : 0
       }
+      if (typeof overrideHost === 'string') {
+        options.host = overrideHost
+      }
     },
     asyncEnd ({ server }) {
+      cancel()
       resolve(server)
     },
-    error (error) {
+    error ({ error }) {
       cancel()
       reject(error)
     }
@@ -24,8 +33,10 @@ export function createServerListener (overridePort = true) {
   }
 
   tracingChannel('net.server.listen').subscribe(subscribers)
-  promise.finally(cancel)
-  promise.cancel = resolve.bind(null, null)
+  promise.cancel = function () {
+    cancel()
+    resolve(null)
+  }
 
   return promise
 }

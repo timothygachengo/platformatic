@@ -1,5 +1,4 @@
 #! /usr/bin/env node
-
 import { command as client } from '@platformatic/client-cli'
 import {
   getRuntimesCommand,
@@ -9,6 +8,7 @@ import {
 } from '@platformatic/control/control.js'
 import { startCommand } from '@platformatic/runtime'
 import { compile, run as runRuntime } from '@platformatic/runtime/runtime.mjs'
+import { checkNodeVersionForServices } from '@platformatic/utils'
 import { isColorSupported } from 'colorette'
 import commist from 'commist'
 import { join } from 'desm'
@@ -22,6 +22,8 @@ import { logo } from './lib/ascii.js'
 import { build } from './lib/build.js'
 import { resolve } from './lib/resolve.js'
 import { upgrade } from './lib/upgrade.js'
+
+checkNodeVersionForServices()
 
 const program = commist({ maxDistance: 2 })
 const help = helpMe({
