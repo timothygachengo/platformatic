@@ -12,6 +12,7 @@ import { copy } from 'fs-extra'
 import dotenv from 'dotenv'
 import { readFile } from 'fs/promises'
 import { isFileAccessible } from '../cli.mjs'
+import { safeKill } from './helper.js'
 
 const env = { ...process.env, NODE_V8_COVERAGE: undefined }
 
@@ -57,7 +58,7 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const app2 = execa('node', ['index.js'], { env })
-  t.after(() => app2.kill())
+  t.after(() => safeKill(app2))
   t.after(async () => { await app.close() })
 
   const stream = app2.stdout.pipe(split(JSON.parse))
@@ -107,7 +108,7 @@ app.register(movies, {
 });
 
 app.get('/', async (req) => {
-  const res = await req.movies.getMovies()
+  const res = await req.movies.getMovies({})
   return res
 })
 
@@ -141,7 +142,7 @@ app.listen({ port: 0 });
   await copy(join(dir, 'movies'), join(dir, 'build', 'movies'))
 
   const server2 = execa('node', ['build/index.js'], { env })
-  t.after(() => server2.kill())
+  t.after(() => safeKill(server2))
   t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
@@ -199,7 +200,7 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const server2 = execa('node', ['index.js'], { env })
-  t.after(() => server2.kill())
+  t.after(() => safeKill(server2))
   t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
@@ -277,7 +278,7 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const server2 = execa('node', ['index.js'], { env })
-  t.after(() => server2.kill())
+  t.after(() => safeKill(server2))
   t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
@@ -364,7 +365,7 @@ app.listen({ port: 0 });
   await copy(join(dir, 'movies'), join(dir, 'build', 'movies'))
 
   const server2 = execa('node', ['build/index.js'])
-  t.after(() => server2.kill())
+  t.after(() => safeKill(server2))
   t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
@@ -472,7 +473,7 @@ app.listen({ port: 0 })
 `
   await fs.writeFile(join(dir, 'index.js'), toWrite)
   const app2 = execa('node', ['index.js'])
-  t.after(() => app2.kill())
+  t.after(() => safeKill(app2))
   t.after(async () => { await app.close() })
 
   const stream = app2.stdout.pipe(split(JSON.parse))
@@ -555,7 +556,7 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const app2 = execa('node', ['index.js'])
-  t.after(() => app2.kill())
+  t.after(() => safeKill(app2))
   t.after(async () => { await app.close() })
 
   const stream = app2.stdout.pipe(split(JSON.parse))
@@ -626,7 +627,7 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const app2 = execa('node', ['index.js'])
-  t.after(() => app2.kill())
+  t.after(() => safeKill(app2))
   t.after(async () => { await app.close() })
 
   const stream = app2.stdout.pipe(split(JSON.parse))
@@ -704,7 +705,7 @@ app.listen({ port: 0 });
   await copy(join(dir, 'uncanny-movies'), join(dir, 'build', 'uncanny-movies'))
 
   const server2 = execa('node', ['build/index.js'])
-  t.after(() => server2.kill())
+  t.after(() => safeKill(server2))
   t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
@@ -776,7 +777,7 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const app2 = execa('node', ['index.js'])
-  t.after(() => app2.kill())
+  t.after(() => safeKill(app2))
   t.after(async () => { await app.close() })
 
   const stream = app2.stdout.pipe(split(JSON.parse))
@@ -817,7 +818,7 @@ test('openapi client generation from YAML file', async (t) => {
   const typeFile = join(dir, 'movies', 'movies.d.ts')
   const typeData = await readFile(typeFile, 'utf-8')
 
-  equal(match(typeData, 'getMovies(req?: GetMoviesRequest): Promise<GetMoviesResponses>;'), true)
+  equal(match(typeData, 'getMovies(req: GetMoviesRequest): Promise<GetMoviesResponses>;'), true)
 })
 
 test('nested optional parameters are correctly identified', async (t) => {
@@ -889,7 +890,7 @@ test('openapi client generation (javascript) from file with fullRequest, fullRes
 `), true)
     equal(data.includes(`
   export type Full = {
-    postHello(req?: PostHelloRequest): Promise<PostHelloResponses>;
+    postHello(req: PostHelloRequest): Promise<PostHelloResponses>;
   }`), true)
     const implementationFile = join(dir, 'full', 'full.cjs')
     const implementationData = await readFile(implementationFile, 'utf-8')
@@ -956,7 +957,7 @@ test('do not generate implementation file if in platformatic service', async (t)
 `), true)
     equal(data.includes(`
   export type Full = {
-    postHello(req?: PostHelloRequest): Promise<PostHelloResponses>;
+    postHello(req: PostHelloRequest): Promise<PostHelloResponses>;
   }`), true)
   }
 })
@@ -1047,7 +1048,7 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const server2 = execa('node', ['index.js'])
-  t.after(() => server2.kill())
+  t.after(() => safeKill(server2))
   t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
@@ -1089,7 +1090,7 @@ test('requestbody as array', async (t) => {
 
   equal(data.includes(`
   export type Movies = {
-    postFoobar(req?: PostFoobarRequest[]): Promise<PostFoobarResponses>;
+    postFoobar(req: PostFoobarRequest[]): Promise<PostFoobarResponses>;
   }
 `), true)
   equal(data.includes('export type PostFoobarRequest = Array<{ \'id\'?: string; \'title\'?: string }>'), true)
